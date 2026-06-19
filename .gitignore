@@ -1,0 +1,53 @@
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Qwen / agent metadata
+.qwen/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+stasera-api
+/bin/
+/dist/
+
+# Logs
+*.log
+
+# Flutter / Dart
+flutter/.dart_tool/
+flutter/build/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.packages
+flutter/.pub-cache/
+flutter/.pub/
+flutter/pubspec.lock
+flutter/android/local.properties
+flutter/android/.gradle/
+flutter/android/captures/
+flutter/android/.cxx/
+flutter/ios/Pods/
+flutter/ios/.symlinks/
+flutter/ios/Flutter/ephemeral/
+flutter/ios/Flutter/flutter_export_environment.sh
+flutter/ios/Flutter/Generated.xcconfig
+flutter/ios/Flutter/Debug.xcconfig
+flutter/ios/Flutter/Release.xcconfig
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
