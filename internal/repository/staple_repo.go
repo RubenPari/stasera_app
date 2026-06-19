@@ -1,0 +1,187 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/google/uuid"
+	"github.com/stasera/stasera-api/internal/model"
+)
+
+// StapleRepository manages persistence for user staples.
+type StapleRepository struct {
+	db *sql.DB
+}
+
+// NewStapleRepository returns a new StapleRepository backed by the provided pool.
+func NewStapleRepository(db *sql.DB) *StapleRepository {
+	return &StapleRepository{db: db}
+}
+
+// defaultStaples is the list of ingredients seeded for every new user.
+var defaultStaples = []string{
+	"pasta",
+	"riso",
+	"olio extravergine d'oliva",
+	"sale",
+	"pepe",
+	"aglio",
+	"tonno in scatoletta",
+	"pomodori pelati in scatola",
+	"uova",
+	"pane in cassetta",
+	"aceto",
+	"dado da brodo",
+}
+
+// SeedDefaults inserts the default staple list for the given user, ignoring duplicates.
+func (r *StapleRepository) SeedDefaults(ctx context.Context, userID uuid.UUID) error {
+	for _, name := range defaultStaples {
+		id := uuid.NewString()
+		_, err := r.db.ExecContext(ctx, `
+			INSERT IGNORE INTO staples (id, user_id, name)
+			VALUES (?, ?, ?)
+		`, id, userID.String(), name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetActiveByUserID returns all active staples for a user.
+func (r *StapleRepository) GetActiveByUserID(ctx context.Context, userID uuid.UUID) ([]model.Staple, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, name, is_active
+		FROM staples
+		WHERE user_id = ? AND is_active = TRUE
+		ORDER BY name
+	`, userID.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var staples []model.Staple
+	for rows.Next() {
+		s, err := scanStaple(rows)
+		if err != nil {
+			return nil, err
+		}
+		staples = append(staples, *s)
+	}
+	return staples, rows.Err()
+}
+
+// GetAllByUserID returns all staples for a user, active and inactive.
+func (r *StapleRepository) GetAllByUserID(ctx context.Context, userID uuid.UUID) ([]model.Staple, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, name, is_active
+		FROM staples
+		WHERE user_id = ?
+		ORDER BY is_active DESC, name
+	`, userID.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var staples []model.Staple
+	for rows.Next() {
+		s, err := scanStaple(rows)
+		if err != nil {
+			return nil, err
+		}
+		staples = append(staples, *s)
+	}
+	return staples, rows.Err()
+}
+
+// Create adds a new staple for the user, ignoring duplicates by name.
+// Returns the resulting row. If the staple already exists (even inactive),
+// it is reactivated and returned.
+func (r *StapleRepository) Create(ctx context.Context, userID uuid.UUID, name string) (model.Staple, error) {
+	id := uuid.NewString()
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO staples (id, user_id, name)
+		VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE is_active = TRUE
+	`, id, userID.String(), name)
+	if err != nil {
+		return model.Staple{}, err
+	}
+
+	var s model.Staple
+	var idStr, userIDStr string
+	err = r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, is_active
+		FROM staples
+		WHERE user_id = ? AND name = ?
+	`, userID.String(), name).Scan(&idStr, &userIDStr, &s.Name, &s.IsActive)
+	if err != nil {
+		return model.Staple{}, err
+	}
+	s.ID = uuid.MustParse(idStr)
+	s.UserID = uuid.MustParse(userIDStr)
+	return s, nil
+}
+
+// UpdateActive changes the is_active flag of a staple owned by the user.
+// Returns nil, nil when the staple does not exist or does not belong to the user.
+func (r *StapleRepository) UpdateActive(ctx context.Context, userID, id uuid.UUID, isActive bool) (*model.Staple, error) {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE staples
+		SET is_active = ?
+		WHERE id = ? AND user_id = ?
+	`, isActive, id.String(), userID.String())
+	if err != nil {
+		return nil, err
+	}
+
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, is_active
+		FROM staples
+		WHERE id = ? AND user_id = ?
+	`, id.String(), userID.String())
+	s, err := scanStaple(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// DeleteByID removes a staple owned by the user. Returns false when nothing was deleted.
+func (r *StapleRepository) DeleteByID(ctx context.Context, userID, id uuid.UUID) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM staples
+		WHERE id = ? AND user_id = ?
+	`, id.String(), userID.String())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// stapleScanner is the common interface accepted by scanStaple.
+type stapleScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanStaple(s stapleScanner) (*model.Staple, error) {
+	var st model.Staple
+	var idStr, userIDStr string
+	if err := s.Scan(&idStr, &userIDStr, &st.Name, &st.IsActive); err != nil {
+		return nil, err
+	}
+	st.ID = uuid.MustParse(idStr)
+	st.UserID = uuid.MustParse(userIDStr)
+	return &st, nil
+}
