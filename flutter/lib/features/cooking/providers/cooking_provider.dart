@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/dto.dart';
-import '../../home/data/meal_plan_repository.dart';
+import '../../home/data/recipe_repository.dart';
 
 /// Stato della sessione di cottura.
 sealed class CookingState {
@@ -14,11 +14,29 @@ class CookingLoading extends CookingState {
   const CookingLoading();
 }
 
+/// Stato "pronto": ricetta caricata, step completati, eventuale timer attivo.
+///
+/// Il countdown VIVE nel notifier: [activeTimerStep] è l'indice dello step in
+/// countdown (null = nessun timer attivo), [remainingSeconds] è il conto alla
+/// rovescia corrente. La UI si limita a fare il render di questi campi.
+/// [justFinishedStep] è un segnale transiente (step il cui timer è appena
+/// terminato) che la UI usa per mostrare l'overlay "Timer finito!"; va
+/// consumato chiamando [CookingNotifier.clearJustFinished].
 class CookingReady extends CookingState {
-  CookingReady(this.recipe, this.completedSteps, this.activeTimer);
+  CookingReady(
+    this.recipe,
+    this.completedSteps,
+    this.activeTimerStep,
+    this.remainingSeconds, {
+    this.justFinishedStep,
+  });
+
   final RecipeDto recipe;
   final Set<int> completedSteps;
-  final int? activeTimer; // step index in countdown
+  final int? activeTimerStep;
+  final int remainingSeconds;
+  final int? justFinishedStep;
+
   bool get allDone => completedSteps.length == recipe.steps.length;
 }
 
@@ -31,24 +49,25 @@ class CookingDone extends CookingState {
   const CookingDone();
 }
 
-/// Notifier che gestisce step completati, timer attivi e chiamata POST /cooked.
+/// Notifier che possiede tutta la logica di countdown e stato step.
+/// La UI di [CookingScreen] si limita a fare il render di [CookingState].
 class CookingNotifier extends StateNotifier<CookingState> {
   CookingNotifier(this._repo) : super(const CookingLoading());
 
-  final MealPlanRepository _repo;
+  final RecipeRepository _repo;
   Timer? _countdown;
-  int _remainingSeconds = 0;
 
   /// Carica la ricetta per ID (via GET /recipes/:id).
   Future<void> load(String recipeId) async {
     try {
       final recipe = await _repo.getRecipe(recipeId);
-      state = CookingReady(recipe, <int>{}, null);
+      state = CookingReady(recipe, <int>{}, null, 0);
     } catch (e) {
       state = CookingError(e.toString());
     }
   }
 
+  /// Toggle (on/off) di uno step senza timer — per i tap manuali.
   void toggleStep(int index) {
     final s = state;
     if (s is! CookingReady) return;
@@ -58,39 +77,75 @@ class CookingNotifier extends StateNotifier<CookingState> {
     } else {
       completed.add(index);
     }
-    state = CookingReady(s.recipe, completed, s.activeTimer);
+    state = CookingReady(
+      s.recipe,
+      completed,
+      s.activeTimerStep,
+      s.remainingSeconds,
+    );
   }
 
-  void startTimer(int stepIndex, void Function() onTick, void Function() onDone) {
+  /// Avvia il countdown di uno step con timer. Aggiorna [remainingSeconds]
+  /// ogni secondo; a countdown esaurito marca lo step come completato ed
+  /// emette [justFinishedStep] per l'overlay UI.
+  void startStepTimer(int stepIndex) {
     final s = state;
     if (s is! CookingReady) return;
     final seconds = s.recipe.steps[stepIndex].timerSeconds;
     if (seconds <= 0) return;
-    _remainingSeconds = seconds;
-    state = CookingReady(s.recipe, s.completedSteps, stepIndex);
 
     _countdown?.cancel();
+    state = CookingReady(s.recipe, s.completedSteps, stepIndex, seconds);
+
     _countdown = Timer.periodic(const Duration(seconds: 1), (t) {
-      _remainingSeconds--;
-      onTick();
-      if (_remainingSeconds <= 0) {
+      final cur = state;
+      if (cur is! CookingReady) {
         t.cancel();
-        final cur = state;
-        if (cur is CookingReady) {
-          state = CookingReady(cur.recipe, cur.completedSteps, null);
-        }
-        onDone();
+        return;
+      }
+      final next = cur.remainingSeconds - 1;
+      if (next <= 0) {
+        t.cancel();
+        final completed = Set<int>.from(cur.completedSteps)
+          ..add(cur.activeTimerStep!);
+        state = CookingReady(
+          cur.recipe,
+          completed,
+          null,
+          0,
+          justFinishedStep: cur.activeTimerStep,
+        );
+      } else {
+        state = CookingReady(
+          cur.recipe,
+          cur.completedSteps,
+          cur.activeTimerStep,
+          next,
+        );
       }
     });
   }
 
-  int get remainingSeconds => _remainingSeconds;
-
-  void cancelTimer() {
+  /// Annulla il timer attivo (es. l'utente lascia la schermata o tap manuale).
+  void cancelStepTimer() {
     _countdown?.cancel();
     final s = state;
     if (s is CookingReady) {
-      state = CookingReady(s.recipe, s.completedSteps, null);
+      state = CookingReady(s.recipe, s.completedSteps, null, 0);
+    }
+  }
+
+  /// Consuma il segnale transiente [CookingReady.justFinishedStep]
+  /// (chiamato dalla UI dopo aver mostrato l'overlay "Timer finito!").
+  void clearJustFinished() {
+    final s = state;
+    if (s is CookingReady && s.justFinishedStep != null) {
+      state = CookingReady(
+        s.recipe,
+        s.completedSteps,
+        s.activeTimerStep,
+        s.remainingSeconds,
+      );
     }
   }
 
@@ -114,5 +169,5 @@ class CookingNotifier extends StateNotifier<CookingState> {
 
 final cookingProvider =
     StateNotifierProvider.autoDispose<CookingNotifier, CookingState>((ref) {
-  return CookingNotifier(ref.watch(mealPlanRepositoryProvider));
+  return CookingNotifier(ref.watch(recipeRepositoryProvider));
 });

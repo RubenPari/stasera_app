@@ -5,10 +5,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lottie/lottie.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/util/format.dart';
+import '../../../shared/util/load_on_post_frame.dart';
 import '../../../shared/widgets/step_card.dart';
 import '../providers/cooking_provider.dart';
 
 /// Schermata di cottura step-by-step con timer individuali e animazione finale.
+///
+/// Tutta la logica di countdown vive in [CookingNotifier]; questa view si
+/// limita a fare il render di [CookingState]. L'overlay "Timer finito!" è
+/// driven da `ref.listen` sul segnale transiente `justFinishedStep`.
 class CookingScreen extends ConsumerStatefulWidget {
   const CookingScreen({super.key, required this.recipeId});
 
@@ -20,47 +27,36 @@ class CookingScreen extends ConsumerStatefulWidget {
 
 class _CookingScreenState extends ConsumerState<CookingScreen> {
   bool _ingredientsExpanded = false;
-  int? _activeStep;
-  int _remaining = 0;
-  Timer? _uiTimer;
   OverlayEntry? _timerOverlay;
+  Timer? _overlayDismissTimer;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(cookingProvider.notifier).load(widget.recipeId);
+    loadOnPostFrame(
+        () => ref.read(cookingProvider.notifier).load(widget.recipeId),);
+    // Mostra l'overlay "Timer finito!" quando il notifier segnala il completamento.
+    ref.listen<CookingState>(cookingProvider, (prev, next) {
+      if (next is CookingReady && next.justFinishedStep != null) {
+        _showTimerDoneOverlay();
+        ref.read(cookingProvider.notifier).clearJustFinished();
+      }
     });
   }
 
   @override
   void dispose() {
-    _uiTimer?.cancel();
+    _overlayDismissTimer?.cancel();
     _timerOverlay?.remove();
     super.dispose();
   }
 
-  void _startTimerForStep(int stepIndex, int seconds) {
-    if (seconds <= 0) return;
-    setState(() => _activeStep = stepIndex);
-    _remaining = seconds;
-
-    _uiTimer?.cancel();
-    _uiTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      setState(() => _remaining--);
-      if (_remaining <= 0) {
-        t.cancel();
-        _showTimerDoneOverlay();
-        ref.read(cookingProvider.notifier).toggleStep(stepIndex);
-        setState(() => _activeStep = null);
-      }
-    });
-  }
-
   void _showTimerDoneOverlay() {
+    _timerOverlay?.remove();
+    _overlayDismissTimer?.cancel();
     _timerOverlay = OverlayEntry(
       builder: (ctx) => Material(
-        color: Colors.black54,
+        color: AppTheme.scrim,
         child: Center(
           child: Card(
             child: Padding(
@@ -68,13 +64,12 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.alarm, size: 64, color: Colors.green),
+                  const Icon(Icons.alarm, size: 64, color: AppTheme.success),
                   const SizedBox(height: 16),
-                  const Text('Timer finito!',
-                      style: TextStyle(fontSize: 24)),
+                  const Text('Timer finito!', style: TextStyle(fontSize: 24)),
                   const SizedBox(height: 16),
                   ElevatedButton(
-                    onPressed: () => _timerOverlay?.remove(),
+                    onPressed: () => _dismissTimerOverlay(),
                     child: const Text('OK'),
                   ),
                 ],
@@ -85,8 +80,16 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
       ),
     );
     Overlay.of(context).insert(_timerOverlay!);
-    // Auto-dismiss dopo 10 secondi.
-    Timer(const Duration(seconds: 10), () => _timerOverlay?.remove());
+    // Auto-dismiss registrato per la dispose (non orfano).
+    _overlayDismissTimer =
+        Timer(const Duration(seconds: 10), _dismissTimerOverlay);
+  }
+
+  void _dismissTimerOverlay() {
+    _overlayDismissTimer?.cancel();
+    _overlayDismissTimer = null;
+    _timerOverlay?.remove();
+    _timerOverlay = null;
   }
 
   @override
@@ -118,8 +121,7 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(recipe.name,
-            style: Theme.of(context).textTheme.headlineSmall),
+        Text(recipe.name, style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
         Text('${recipe.prepMinutes} min · ${recipe.servings} porzioni'),
         const SizedBox(height: 16),
@@ -128,36 +130,36 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
           child: ExpansionTile(
             title: const Text('Ingredienti'),
             initiallyExpanded: _ingredientsExpanded,
-            onExpansionChanged: (v) =>
-                setState(() => _ingredientsExpanded = v),
+            onExpansionChanged: (v) => setState(() => _ingredientsExpanded = v),
             children: recipe.ingredients
                 .map((i) => ListTile(
                       dense: true,
                       title: Text(i.name),
                       trailing: Text(i.qty),
-                    ))
+                    ),)
                 .toList(),
           ),
         ),
         const SizedBox(height: 16),
-        Text('Passaggi',
-            style: Theme.of(context).textTheme.titleMedium),
+        Text('Passaggi', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ...recipe.steps.asMap().entries.map((entry) {
           final idx = entry.key;
           final step = entry.value;
           final isDone = state.completedSteps.contains(idx);
-          final isActiveTimer = _activeStep == idx;
+          final isActiveTimer = state.activeTimerStep == idx;
           return Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: StepCard(
               step: step,
               index: idx,
               isDone: isDone,
-              timerLabel: isActiveTimer ? _formatRemaining(_remaining) : null,
+              timerLabel: isActiveTimer
+                  ? Format.duration(state.remainingSeconds)
+                  : null,
               onTap: () {
                 if (step.timerSeconds > 0 && !isDone) {
-                  _startTimerForStep(idx, step.timerSeconds);
+                  ref.read(cookingProvider.notifier).startStepTimer(idx);
                 } else {
                   ref.read(cookingProvider.notifier).toggleStep(idx);
                 }
@@ -188,8 +190,10 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
             'assets/lottie/confetti.json',
             repeat: false,
             width: 240,
-            errorBuilder: (context, error, stack) =>
-                const Icon(Icons.celebration, size: 80, color: Colors.green),
+            errorBuilder: (context, error, stack) => const Icon(
+                Icons.celebration,
+                size: 80,
+                color: AppTheme.success,),
           ),
           const SizedBox(height: 16),
           const Text('Buona cena!', style: TextStyle(fontSize: 28)),
@@ -201,11 +205,5 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
         ],
       ),
     );
-  }
-
-  String _formatRemaining(int seconds) {
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
   }
 }
