@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_exception.dart';
 import '../../../core/models/dto.dart';
+import '../../../core/notifications/notification_service.dart';
 import '../data/auth_repository.dart';
 
 /// Stato auth esposto al UI.
@@ -75,7 +76,38 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Aggiorna il nome visualizzato dell'utente autenticato.
+  /// Restituisce `null` in caso di successo, altrimenti il messaggio d'errore.
+  Future<String?> updateDisplayName(String name) async {
+    try {
+      final updated = await _repo.updateMe(displayName: name);
+      state = Authenticated(updated);
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Errore inatteso';
+    }
+  }
+
+  /// Cambia la password dell'utente autenticato.
+  /// Restituisce `null` in caso di successo, altrimenti il messaggio d'errore.
+  Future<String?> changePassword(String current, String next) async {
+    try {
+      await _repo.changePassword(currentPassword: current, newPassword: next);
+      return null;
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) {
+        return 'Password corrente errata';
+      }
+      return e.message;
+    } catch (_) {
+      return 'Errore inatteso';
+    }
+  }
+
   Future<void> logout() async {
+    await NotificationService.cancelAllReminders();
     await _repo.logout();
     state = const Unauthenticated();
   }
