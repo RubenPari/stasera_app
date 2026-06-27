@@ -3,7 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/notifications/notification_service.dart';
 import '../../../shared/widgets/recipe_card.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../week_plan/providers/week_plan_provider.dart';
 import '../providers/tonight_provider.dart';
 
 /// Schermata principale: la cena di stasera.
@@ -27,6 +30,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authProvider, (prev, next) {
+      if (next is Authenticated) {
+        NotificationService.scheduleWeekdayReminders();
+      } else if (next is Unauthenticated) {
+        NotificationService.cancelAllReminders();
+      }
+    });
     final state = ref.watch(tonightProvider);
     final today = DateTime.now();
     final isSunday = today.weekday == DateTime.sunday;
@@ -53,6 +63,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openCooking(String recipeId) async {
+    final finished = await context.push<bool>('/cooking/$recipeId');
+    if (finished == true && mounted) {
+      ref.invalidate(tonightProvider);
+      ref.invalidate(weekPlanProvider);
+    }
   }
 
   Widget _body(TonightState state, bool isSunday, bool isWeekday) {
@@ -92,11 +110,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const SizedBox(height: 12),
           RecipeCard(
             recipe: recipe,
-            onTap: () => context.push('/cooking/${recipe.id}'),
+            onTap: () => _openCooking(recipe.id),
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: () => context.push('/cooking/${recipe.id}'),
+            onPressed: () => _openCooking(recipe.id),
             icon: const Icon(Icons.play_arrow),
             label: const Text('Inizia a cucinare'),
           ),
