@@ -3,37 +3,52 @@ package db
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
 	"sort"
 	"strings"
 )
 
-// RunMigrations applies all pending SQL migrations located in the migrations/ directory.
+//go:embed migrations/*.sql
+var migrationFS embed.FS
+
+// RunMigrations applies all pending SQL migrations embedded in the binary.
 // Migration state is tracked in the schema_migrations table.
-// Each migration file may contain multiple statements separated by ";" — they are
-// split and executed one at a time inside a single transaction.
+// A MySQL advisory lock prevents concurrent executions on multi-replica deploys.
 func RunMigrations(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version VARCHAR(255) PRIMARY KEY
+			version    VARCHAR(255) PRIMARY KEY,
+			applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)
 	`); err != nil {
 		return fmt.Errorf("create schema_migrations table: %w", err)
 	}
 
-	files, err := filepath.Glob("migrations/*.sql")
+	// Advisory lock ensures only one replica runs migrations at a time.
+	var locked int
+	if err := db.QueryRowContext(ctx, "SELECT GET_LOCK('stasera_migrations', 10)").Scan(&locked); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	if locked != 1 {
+		return fmt.Errorf("could not acquire migration lock within 10 seconds")
+	}
+	defer db.ExecContext(ctx, "SELECT RELEASE_LOCK('stasera_migrations')") //nolint:errcheck
+
+	entries, err := fs.ReadDir(migrationFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("list migrations: %w", err)
 	}
-	sort.Strings(files)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
 
-	for _, file := range files {
-		version := filepath.Base(file)
-		if strings.TrimSpace(version) == "" {
+	for _, entry := range entries {
+		if entry.IsDir() {
 			continue
 		}
+		version := entry.Name()
 
 		var applied bool
 		if err := db.QueryRowContext(ctx,
@@ -46,7 +61,7 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 
-		sqlBytes, err := os.ReadFile(file)
+		sqlBytes, err := migrationFS.ReadFile("migrations/" + version)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", version, err)
 		}
@@ -85,9 +100,8 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 }
 
 // splitStatements splits a SQL script into individual statements on ";".
-// It preserves content inside string literals and comments are stripped
-// minimally (single-line "--" comments). Sufficient for migration files
-// made of CREATE TABLE statements.
+// It handles string literals (single quotes, double quotes, backticks) and strips
+// full-line "--" comments. Sufficient for CREATE TABLE migration files.
 func splitStatements(script string) []string {
 	var out []string
 	var buf strings.Builder
@@ -103,13 +117,12 @@ func splitStatements(script string) []string {
 		buf.Reset()
 	}
 
-	lines := strings.Split(script, "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(script, "\n") {
 		trimmed := strings.TrimSpace(line)
-		// Skip full-line comments starting with --.
 		if strings.HasPrefix(trimmed, "--") {
 			continue
 		}
+		flushed := false
 		for i := 0; i < len(line); i++ {
 			c := line[i]
 			switch c {
@@ -127,14 +140,22 @@ func splitStatements(script string) []string {
 				}
 			case ';':
 				if !inSingle && !inDouble && !inBacktick {
-					buf.WriteString(line[:i+1])
+					buf.WriteByte(c)
 					flush()
+					// Append remainder of the line after the semicolon.
+					if rest := strings.TrimSpace(line[i+1:]); rest != "" {
+						buf.WriteString(rest)
+						buf.WriteByte('\n')
+					}
+					flushed = true
 					goto nextLine
 				}
 			}
+			buf.WriteByte(c)
 		}
-		buf.WriteString(line)
-		buf.WriteByte('\n')
+		if !flushed {
+			buf.WriteByte('\n')
+		}
 	nextLine:
 	}
 	flush()
