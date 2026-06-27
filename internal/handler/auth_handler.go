@@ -185,6 +185,77 @@ func (h *AuthHandler) Me(c echo.Context) error {
 	return c.JSON(http.StatusOK, toUserDTO(*user))
 }
 
+type updateProfileRequest struct {
+	DisplayName string `json:"display_name" validate:"required,min=1,max=100"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
+	NewPassword     string `json:"new_password"     validate:"required,gte=8"`
+}
+
+// UpdateMe updates the authenticated user's display name.
+func (h *AuthHandler) UpdateMe(c echo.Context) error {
+	uid, err := middleware.GetUserID(c)
+	if err != nil {
+		return middleware.Unauthorized(c, "missing or invalid token")
+	}
+
+	var req updateProfileRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if err := h.validator.Struct(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	user, err := h.userRepo.UpdateProfile(c.Request().Context(), uid, req.DisplayName)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update profile"})
+	}
+
+	return c.JSON(http.StatusOK, toUserDTO(user))
+}
+
+// ChangePassword rotates the authenticated user's password after verifying the current one.
+func (h *AuthHandler) ChangePassword(c echo.Context) error {
+	uid, err := middleware.GetUserID(c)
+	if err != nil {
+		return middleware.Unauthorized(c, "missing or invalid token")
+	}
+
+	var req changePasswordRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if err := h.validator.Struct(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	user, err := h.userRepo.FindByID(c.Request().Context(), uid)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to lookup user"})
+	}
+	if user == nil {
+		return middleware.Unauthorized(c, "user not found")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid current password"})
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to hash password"})
+	}
+
+	if err := h.userRepo.UpdatePasswordHash(c.Request().Context(), uid, string(hash)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update password"})
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}
+
 func toUserDTO(u model.User) model.UserDTO {
 	return model.UserDTO{
 		ID:          u.ID,
