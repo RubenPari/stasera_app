@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/auth/auth_storage.dart';
+import 'core/routes/app_routes.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/register_screen.dart';
@@ -18,53 +19,53 @@ final routerProvider = Provider<GoRouter>((ref) {
   final storage = ref.watch(authStorageProvider);
 
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: AppRoutes.home,
     redirect: (context, state) async {
       final isLoggedIn = await storage.hasAccessToken();
-      final isAuthRoute = state.matchedLocation == '/login' ||
-          state.matchedLocation == '/register';
+      final isAuthRoute = state.matchedLocation == AppRoutes.login ||
+          state.matchedLocation == AppRoutes.register;
 
       if (!isLoggedIn && !isAuthRoute) {
-        return '/login';
+        return AppRoutes.login;
       }
       if (isLoggedIn && isAuthRoute) {
-        return '/';
+        return AppRoutes.home;
       }
       return null;
     },
     routes: [
       GoRoute(
-        path: '/',
+        path: AppRoutes.home,
         builder: (context, state) => const HomeScreen(),
       ),
       GoRoute(
-        path: '/cooking/:recipeId',
+        path: AppRoutes.cooking,
         builder: (context, state) => CookingScreen(
           recipeId: state.pathParameters['recipeId']!,
         ),
       ),
       GoRoute(
-        path: '/week',
+        path: AppRoutes.week,
         builder: (context, state) => const WeekPlanScreen(),
       ),
       GoRoute(
-        path: '/shopping',
+        path: AppRoutes.shopping,
         builder: (context, state) => const ShoppingScreen(),
       ),
       GoRoute(
-        path: '/rescue',
+        path: AppRoutes.rescue,
         builder: (context, state) => const RescueScreen(),
       ),
       GoRoute(
-        path: '/settings',
+        path: AppRoutes.settings,
         builder: (context, state) => const SettingsScreen(),
       ),
       GoRoute(
-        path: '/login',
+        path: AppRoutes.login,
         builder: (context, state) => const LoginScreen(),
       ),
       GoRoute(
-        path: '/register',
+        path: AppRoutes.register,
         builder: (context, state) => const RegisterScreen(),
       ),
     ],

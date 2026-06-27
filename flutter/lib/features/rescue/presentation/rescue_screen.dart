@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/routes/app_routes.dart';
+import '../../../shared/util/load_on_post_frame.dart';
 import '../../../shared/widgets/recipe_card.dart';
 import '../../home/providers/tonight_provider.dart';
 import '../../week_plan/providers/week_plan_provider.dart';
@@ -19,9 +21,7 @@ class _RescueScreenState extends ConsumerState<RescueScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(rescueProvider.notifier).load();
-    });
+    loadOnPostFrame(() => ref.read(rescueProvider.notifier).load());
   }
 
   @override
@@ -33,14 +33,21 @@ class _RescueScreenState extends ConsumerState<RescueScreen> {
         title: const Text('Stasera cucino poco'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/'),
+          // Torna alla schermata precedente se c'è history, altrimenti home.
+          onPressed: () {
+            if (Navigator.of(context).canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.home);
+            }
+          },
         ),
       ),
       body: state is RescueInitial || state is RescueLoading
-          ? Center(
+          ? const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   CircularProgressIndicator(),
                   SizedBox(height: 16),
                   Text('Sto cercando cosa hai in casa...'),
@@ -64,7 +71,7 @@ class _RescueScreenState extends ConsumerState<RescueScreen> {
                                 recipe: r,
                                 onTap: () async {
                                   final finished = await context.push<bool>(
-                                    '/cooking/${r.id}',
+                                    AppRoutes.cookingFor(r.id),
                                   );
                                   if (!mounted) return;
                                   if (finished == true) {
@@ -73,7 +80,7 @@ class _RescueScreenState extends ConsumerState<RescueScreen> {
                                   }
                                 },
                               ),
-                            )),
+                            ),),
                       ],
                     )
                   : const SizedBox.shrink(),

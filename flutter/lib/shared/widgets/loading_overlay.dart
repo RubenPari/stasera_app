@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_theme.dart';
+
 /// Overlay a tutto schermo con spinner e messaggio.
+///
+/// Posizionato via `Stack` nelle schermate che lo usano (spesa, settimana):
+/// uniformato a `AppTheme.scrim` / `AppTheme.onScrim` per la palette.
 class LoadingOverlay extends StatelessWidget {
   const LoadingOverlay({super.key, required this.message, this.visible = true});
 
@@ -14,7 +19,7 @@ class LoadingOverlay extends StatelessWidget {
     return Positioned.fill(
       child: AbsorbPointer(
         child: Container(
-          color: Colors.black54,
+          color: AppTheme.scrim,
           child: Center(
             child: Card(
               child: Padding(
@@ -27,7 +32,7 @@ class LoadingOverlay extends StatelessWidget {
                     Text(
                       message,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: AppTheme.onScrim),
                     ),
                   ],
                 ),

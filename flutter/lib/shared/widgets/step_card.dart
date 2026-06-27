@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/models/dto.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/util/format.dart';
 
 /// Card che rappresenta uno step di cottura con eventuale timer.
 class StepCard extends StatelessWidget {
@@ -33,8 +35,8 @@ class StepCard extends StatelessWidget {
               CircleAvatar(
                 backgroundColor: isDone
                     ? Theme.of(context).colorScheme.primary
-                    : Colors.grey.shade300,
-                foregroundColor: isDone ? Colors.white : Colors.black87,
+                    : AppTheme.mutedSurface,
+                foregroundColor: isDone ? AppTheme.onScrim : AppTheme.onSurface,
                 child: Text('${index + 1}'),
               ),
               const SizedBox(width: 16),
@@ -45,9 +47,8 @@ class StepCard extends StatelessWidget {
                     Text(
                       step.text,
                       style: TextStyle(
-                        decoration:
-                            isDone ? TextDecoration.lineThrough : null,
-                        color: isDone ? Colors.grey : null,
+                        decoration: isDone ? TextDecoration.lineThrough : null,
+                        color: isDone ? AppTheme.muted : null,
                       ),
                     ),
                     if (step.timerSeconds > 0) ...[
@@ -61,7 +62,7 @@ class StepCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            timerLabel ?? _formatDuration(step.timerSeconds),
+                            timerLabel ?? Format.duration(step.timerSeconds),
                             style: TextStyle(
                               color: Theme.of(context).colorScheme.secondary,
                               fontWeight: FontWeight.w600,
@@ -77,19 +78,12 @@ class StepCard extends StatelessWidget {
                 isDone ? Icons.check_circle : Icons.radio_button_unchecked,
                 color: isDone
                     ? Theme.of(context).colorScheme.primary
-                    : Colors.grey,
+                    : AppTheme.muted,
               ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  String _formatDuration(int seconds) {
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    if (s == 0) return '$m min';
-    return '$m:${s.toString().padLeft(2, '0')}';
   }
 }

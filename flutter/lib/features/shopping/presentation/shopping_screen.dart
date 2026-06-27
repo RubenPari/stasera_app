@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/dto.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../shared/util/load_on_post_frame.dart';
 import '../../../shared/widgets/loading_overlay.dart';
 import '../providers/shopping_provider.dart';
 
@@ -16,9 +19,7 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(shoppingProvider.notifier).load();
-    });
+    loadOnPostFrame(() => ref.read(shoppingProvider.notifier).load());
   }
 
   @override
@@ -83,7 +84,8 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen> {
               children: [
                 LinearProgressIndicator(value: progress),
                 const SizedBox(height: 8),
-                Text('${state.checkedCount}/${state.list.items.length} spuntati'),
+                Text(
+                    '${state.checkedCount}/${state.list.items.length} spuntati',),
               ],
             ),
           ),
@@ -91,11 +93,13 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen> {
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               children: [
-                ...grouped.entries.map((e) => _aisleSection(e.key, e.value, isCompleted)),
+                ...grouped.entries
+                    .map((e) => _aisleSection(e.key, e.value, isCompleted)),
                 const SizedBox(height: 24),
                 if (state.allChecked && !isCompleted)
                   FilledButton.icon(
-                    onPressed: () => ref.read(shoppingProvider.notifier).complete(),
+                    onPressed: () =>
+                        ref.read(shoppingProvider.notifier).complete(),
                     icon: const Icon(Icons.check),
                     label: const Text('Spesa completata'),
                   ),
@@ -105,7 +109,7 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen> {
                     child: Text(
                       'Spesa completata ✓',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.green, fontSize: 18),
+                      style: TextStyle(color: AppTheme.success, fontSize: 18),
                     ),
                   ),
               ],
@@ -117,7 +121,8 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen> {
     return const SizedBox.shrink();
   }
 
-  Widget _aisleSection(String aisle, List<dynamic> items, bool isCompleted) {
+  Widget _aisleSection(
+      String aisle, List<ShoppingItemDto> items, bool isCompleted,) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -128,38 +133,37 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen> {
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
         ),
-        ...items.map((i) {
-          // i è ShoppingItemDto, accesso dynamic per semplicità UI.
-          return Card(
-            child: CheckboxListTile(
-              value: i.isChecked as bool,
-              onChanged: isCompleted
-                  ? null
-                  : (v) =>
-                      ref.read(shoppingProvider.notifier).toggleItem(i.id as String, v ?? false),
-              title: Text(
-                i.name as String,
-                style: TextStyle(
-                  decoration: (i.isChecked as bool) ? TextDecoration.lineThrough : null,
+        ...items.map((i) => Card(
+              child: CheckboxListTile(
+                value: i.isChecked,
+                onChanged: isCompleted
+                    ? null
+                    : (v) => ref
+                        .read(shoppingProvider.notifier)
+                        .toggleItem(i.id, v ?? false),
+                title: Text(
+                  i.name,
+                  style: TextStyle(
+                    decoration: i.isChecked ? TextDecoration.lineThrough : null,
+                  ),
                 ),
+                subtitle: Text(i.quantity),
               ),
-              subtitle: Text(i.quantity as String),
-            ),
-          );
-        }),
+            ),),
       ],
     );
   }
 
-  Map<String, List<dynamic>> _groupByAisle(List<dynamic> items) {
-    final m = <String, List<dynamic>>{};
+  /// Raggruppa gli item per corsia con un ordinamento fisso (carne, frigo,
+  /// verdura, dispensa, altro) e tipizzato con [ShoppingItemDto].
+  Map<String, List<ShoppingItemDto>> _groupByAisle(
+      List<ShoppingItemDto> items,) {
+    final m = <String, List<ShoppingItemDto>>{};
     for (final i in items) {
-      final aisle = i.aisle as String;
-      m.putIfAbsent(aisle, () => []).add(i);
+      m.putIfAbsent(i.aisle, () => []).add(i);
     }
-    // Ordine fisso delle corsie.
     const order = ['carne', 'frigo', 'verdura', 'dispensa', 'altro'];
-    final sorted = <String, List<dynamic>>{};
+    final sorted = <String, List<ShoppingItemDto>>{};
     for (final a in order) {
       if (m.containsKey(a)) sorted[a] = m[a]!;
     }

@@ -3,9 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/notifications/notification_service.dart';
+import '../../../core/routes/app_routes.dart';
+import '../../../core/theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 
-/// Schermata di login. Email + password, link a registrazione.
 /// Schermata di login. Email + password, link a registrazione.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -36,7 +37,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final state = ref.read(authProvider);
     if (state is Authenticated && mounted) {
       await NotificationService.scheduleWeekdayReminders();
-      context.go('/');
+      if (!mounted) return;
+      context.go(AppRoutes.home);
     }
   }
 
@@ -89,18 +91,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               if (authState is AuthError)
                 Text(
                   authState.message,
-                  style: const TextStyle(color: Colors.red),
+                  style: const TextStyle(color: AppTheme.error),
                 ),
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: authState is AuthLoading ? null : _submit,
                 child: authState is AuthLoading
-                    ? const CircularProgressIndicator(color: Colors.white)
+                    ? const CircularProgressIndicator(color: AppTheme.onScrim)
                     : const Text('Accedi'),
               ),
               const SizedBox(height: 12),
               TextButton(
-                onPressed: () => context.go('/register'),
+                onPressed: () => context.go(AppRoutes.register),
                 child: const Text('Non hai un account? Registrati'),
               ),
             ],

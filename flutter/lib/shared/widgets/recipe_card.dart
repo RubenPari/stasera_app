@@ -42,8 +42,7 @@ class RecipeCard extends StatelessWidget {
                   const SizedBox(width: 12),
                   _MetricChip(
                     icon: Icons.kitchen,
-                    label:
-                        '${recipe.ingredients.length} ingredienti',
+                    label: '${recipe.ingredients.length} ingredienti',
                   ),
                   if (recipe.isRescue) ...[
                     const SizedBox(width: 12),

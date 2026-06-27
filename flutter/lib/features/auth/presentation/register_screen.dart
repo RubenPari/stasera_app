@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/notifications/notification_service.dart';
+import '../../../core/routes/app_routes.dart';
+import '../../../core/theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 
 /// Schermata di registrazione. Email + password + nome visualizzato.
+///
+/// Nota: i reminder settimanali sono schedulati solo al login (vedi
+/// `LoginScreen`), non alla registrazione, per evitare scheduling multiplo.
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
 
@@ -37,8 +41,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         );
     final state = ref.read(authProvider);
     if (state is Authenticated && mounted) {
-      await NotificationService.scheduleWeekdayReminders();
-      context.go('/');
+      context.go(AppRoutes.home);
     }
   }
 
@@ -68,8 +71,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     labelText: 'Nome',
                     prefixIcon: Icon(Icons.person_outline),
                   ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Inserisci il nome' : null,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Inserisci il nome'
+                      : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -79,8 +83,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     prefixIcon: Icon(Icons.email_outlined),
                   ),
                   keyboardType: TextInputType.emailAddress,
-                  validator: (v) =>
-                      (v == null || !v.contains('@')) ? 'Email non valida' : null,
+                  validator: (v) => (v == null || !v.contains('@'))
+                      ? 'Email non valida'
+                      : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -103,18 +108,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 if (authState is AuthError)
                   Text(
                     authState.message,
-                    style: const TextStyle(color: Colors.red),
+                    style: const TextStyle(color: AppTheme.error),
                   ),
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: authState is AuthLoading ? null : _submit,
                   child: authState is AuthLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
+                      ? const CircularProgressIndicator(color: AppTheme.onScrim)
                       : const Text('Registrati'),
                 ),
                 const SizedBox(height: 12),
                 TextButton(
-                  onPressed: () => context.go('/login'),
+                  onPressed: () => context.go(AppRoutes.login),
                   child: const Text('Hai già un account? Accedi'),
                 ),
               ],
