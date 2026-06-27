@@ -75,6 +75,45 @@ func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Use
 	return u, nil
 }
 
+// UpdateProfile updates the user's display_name and returns the refreshed record.
+func (r *UserRepository) UpdateProfile(ctx context.Context, id uuid.UUID, displayName string) (model.User, error) {
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET display_name = ?
+		WHERE id = ?
+	`, displayName, id.String()); err != nil {
+		return model.User{}, err
+	}
+	u, err := r.FindByID(ctx, id)
+	if err != nil {
+		return model.User{}, err
+	}
+	if u == nil {
+		return model.User{}, sql.ErrNoRows
+	}
+	return *u, nil
+}
+
+// UpdatePasswordHash replaces the stored password hash for a user.
+func (r *UserRepository) UpdatePasswordHash(ctx context.Context, id uuid.UUID, hash string) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET password_hash = ?
+		WHERE id = ?
+	`, hash, id.String())
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // ErrDuplicateEmail is a sentinel error mapped by the handler to HTTP 409.
 var ErrDuplicateEmail = errors.New("email already registered")
 
