@@ -57,6 +57,30 @@ class WeekPlanNotifier extends StateNotifier<WeekPlanState> {
       state = WeekPlanError(e.toString());
     }
   }
+  Future<void> swapDay(int dayOfWeek, String recipeId) async {
+    final s = state;
+    if (s is! WeekPlanLoaded) return;
+    try {
+      final updated = await _repo.swapDay(
+        planId: s.plan.id,
+        dayOfWeek: dayOfWeek,
+        recipeId: recipeId,
+      );
+      final days = s.plan.days.map((d) {
+        return d.dayOfWeek == dayOfWeek ? updated : d;
+      }).toList();
+      state = WeekPlanLoaded(MealPlanDto(
+        id: s.plan.id,
+        userId: s.plan.userId,
+        weekStart: s.plan.weekStart,
+        status: s.plan.status,
+        days: days,
+        createdAt: s.plan.createdAt,
+      ));
+    } catch (e) {
+      state = WeekPlanError(e.toString());
+    }
+  }
 
   Future<void> regenerateDay(int dayOfWeek) async {
     final s = state;
