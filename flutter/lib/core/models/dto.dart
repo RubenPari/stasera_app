@@ -1,5 +1,6 @@
 // Modelli DTO Dart che rispecchiano le risposte JSON del backend Stasera.
-// Tutti immutabili e con `fromJson` factory.
+// Tutti immutabili, con `fromJson` factory e `copyWith` manuale
+// (json_serializable non genera copyWith; freezed è volutamente assente).
 
 class UserDto {
   const UserDto({
@@ -22,6 +23,20 @@ class UserDto {
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
+
+  UserDto copyWith({
+    String? id,
+    String? email,
+    String? displayName,
+    DateTime? createdAt,
+  }) {
+    return UserDto(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      displayName: displayName ?? this.displayName,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 }
 
 class AuthResponseDto {
@@ -42,6 +57,18 @@ class AuthResponseDto {
       refreshToken: json['refresh_token'] as String,
     );
   }
+
+  AuthResponseDto copyWith({
+    UserDto? user,
+    String? accessToken,
+    String? refreshToken,
+  }) {
+    return AuthResponseDto(
+      user: user ?? this.user,
+      accessToken: accessToken ?? this.accessToken,
+      refreshToken: refreshToken ?? this.refreshToken,
+    );
+  }
 }
 
 class TokenPairDto {
@@ -59,6 +86,16 @@ class TokenPairDto {
       refreshToken: json['refresh_token'] as String,
     );
   }
+
+  TokenPairDto copyWith({
+    String? accessToken,
+    String? refreshToken,
+  }) {
+    return TokenPairDto(
+      accessToken: accessToken ?? this.accessToken,
+      refreshToken: refreshToken ?? this.refreshToken,
+    );
+  }
 }
 
 class RecipeIngredientDto {
@@ -73,6 +110,13 @@ class RecipeIngredientDto {
       qty: json['qty'] as String,
     );
   }
+
+  RecipeIngredientDto copyWith({String? name, String? qty}) {
+    return RecipeIngredientDto(
+      name: name ?? this.name,
+      qty: qty ?? this.qty,
+    );
+  }
 }
 
 class RecipeStepDto {
@@ -85,6 +129,13 @@ class RecipeStepDto {
     return RecipeStepDto(
       text: json['text'] as String,
       timerSeconds: (json['timer_seconds'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  RecipeStepDto copyWith({String? text, int? timerSeconds}) {
+    return RecipeStepDto(
+      text: text ?? this.text,
+      timerSeconds: timerSeconds ?? this.timerSeconds,
     );
   }
 }
@@ -137,6 +188,36 @@ class RecipeDto {
           : null,
     );
   }
+
+  RecipeDto copyWith({
+    String? id,
+    String? userId,
+    String? name,
+    int? prepMinutes,
+    int? servings,
+    List<RecipeIngredientDto>? ingredients,
+    List<RecipeStepDto>? steps,
+    bool? isRescue,
+    int? timesCooked,
+    DateTime? createdAt,
+    DateTime? lastCookedAt,
+    bool clearLastCookedAt = false,
+  }) {
+    return RecipeDto(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      name: name ?? this.name,
+      prepMinutes: prepMinutes ?? this.prepMinutes,
+      servings: servings ?? this.servings,
+      ingredients: ingredients ?? this.ingredients,
+      steps: steps ?? this.steps,
+      isRescue: isRescue ?? this.isRescue,
+      timesCooked: timesCooked ?? this.timesCooked,
+      createdAt: createdAt ?? this.createdAt,
+      lastCookedAt:
+          clearLastCookedAt ? null : (lastCookedAt ?? this.lastCookedAt),
+    );
+  }
 }
 
 class MealPlanDayDto {
@@ -163,6 +244,23 @@ class MealPlanDayDto {
       recipe: json['recipe'] != null
           ? RecipeDto.fromJson(json['recipe'] as Map<String, dynamic>)
           : null,
+    );
+  }
+
+  MealPlanDayDto copyWith({
+    String? id,
+    String? planId,
+    int? dayOfWeek,
+    String? recipeId,
+    RecipeDto? recipe,
+    bool clearRecipe = false,
+  }) {
+    return MealPlanDayDto(
+      id: id ?? this.id,
+      planId: planId ?? this.planId,
+      dayOfWeek: dayOfWeek ?? this.dayOfWeek,
+      recipeId: recipeId ?? this.recipeId,
+      recipe: clearRecipe ? null : (recipe ?? this.recipe),
     );
   }
 }
@@ -194,6 +292,24 @@ class MealPlanDto {
           .map((e) => MealPlanDayDto.fromJson(e as Map<String, dynamic>))
           .toList(),
       createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+
+  MealPlanDto copyWith({
+    String? id,
+    String? userId,
+    DateTime? weekStart,
+    String? status,
+    List<MealPlanDayDto>? days,
+    DateTime? createdAt,
+  }) {
+    return MealPlanDto(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      weekStart: weekStart ?? this.weekStart,
+      status: status ?? this.status,
+      days: days ?? this.days,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 }
@@ -229,15 +345,23 @@ class ShoppingItemDto {
     );
   }
 
-  ShoppingItemDto copyWith({bool? isChecked}) {
+  ShoppingItemDto copyWith({
+    String? id,
+    String? listId,
+    String? name,
+    String? quantity,
+    String? aisle,
+    bool? isChecked,
+    int? sortOrder,
+  }) {
     return ShoppingItemDto(
-      id: id,
-      listId: listId,
-      name: name,
-      quantity: quantity,
-      aisle: aisle,
+      id: id ?? this.id,
+      listId: listId ?? this.listId,
+      name: name ?? this.name,
+      quantity: quantity ?? this.quantity,
+      aisle: aisle ?? this.aisle,
       isChecked: isChecked ?? this.isChecked,
-      sortOrder: sortOrder,
+      sortOrder: sortOrder ?? this.sortOrder,
     );
   }
 }
@@ -273,6 +397,26 @@ class ShoppingListDto {
           : null,
     );
   }
+
+  ShoppingListDto copyWith({
+    String? id,
+    String? userId,
+    String? planId,
+    List<ShoppingItemDto>? items,
+    DateTime? createdAt,
+    DateTime? completedAt,
+    bool clearPlanId = false,
+    bool clearCompletedAt = false,
+  }) {
+    return ShoppingListDto(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      planId: clearPlanId ? null : (planId ?? this.planId),
+      items: items ?? this.items,
+      createdAt: createdAt ?? this.createdAt,
+      completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
+    );
+  }
 }
 
 class StapleDto {
@@ -294,6 +438,20 @@ class StapleDto {
       userId: json['user_id'] as String,
       name: json['name'] as String,
       isActive: json['is_active'] as bool,
+    );
+  }
+
+  StapleDto copyWith({
+    String? id,
+    String? userId,
+    String? name,
+    bool? isActive,
+  }) {
+    return StapleDto(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      name: name ?? this.name,
+      isActive: isActive ?? this.isActive,
     );
   }
 }
@@ -322,6 +480,22 @@ class PreferencesDto {
       preferredCuisines:
           (json['preferred_cuisines'] as List<dynamic>).cast<String>(),
       updatedAt: DateTime.parse(json['updated_at'] as String),
+    );
+  }
+
+  PreferencesDto copyWith({
+    String? userId,
+    List<String>? dislikedIngredients,
+    int? maxPrepMinutes,
+    List<String>? preferredCuisines,
+    DateTime? updatedAt,
+  }) {
+    return PreferencesDto(
+      userId: userId ?? this.userId,
+      dislikedIngredients: dislikedIngredients ?? this.dislikedIngredients,
+      maxPrepMinutes: maxPrepMinutes ?? this.maxPrepMinutes,
+      preferredCuisines: preferredCuisines ?? this.preferredCuisines,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 }
