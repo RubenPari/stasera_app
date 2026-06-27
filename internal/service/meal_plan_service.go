@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -10,25 +11,27 @@ import (
 	"github.com/stasera/stasera-api/internal/model"
 	"github.com/stasera/stasera-api/internal/repository"
 )
-
 // MealPlanService orchestrates AI plan generation and persistence.
 type MealPlanService struct {
-	ai       *ai.Gateway
-	recipes  *repository.RecipeRepository
-	plans    *repository.MealPlanRepository
-	prefs    *repository.PreferencesRepository
-	staples  *repository.StapleRepository
+	pool    *sql.DB
+	ai      AIGateway
+	recipes *repository.RecipeRepository
+	plans   *repository.MealPlanRepository
+	prefs   PreferencesStore
+	staples StapleStore
 }
 
 // NewMealPlanService returns a new MealPlanService with the required dependencies.
 func NewMealPlanService(
-	ai *ai.Gateway,
+	pool *sql.DB,
+	ai AIGateway,
 	recipes *repository.RecipeRepository,
 	plans *repository.MealPlanRepository,
-	prefs *repository.PreferencesRepository,
-	staples *repository.StapleRepository,
+	prefs PreferencesStore,
+	staples StapleStore,
 ) *MealPlanService {
 	return &MealPlanService{
+		pool:    pool,
 		ai:      ai,
 		recipes: recipes,
 		plans:   plans,
@@ -36,7 +39,6 @@ func NewMealPlanService(
 		staples: staples,
 	}
 }
-
 // Generate creates a new meal plan for the upcoming week (next Monday) using AI.
 func (s *MealPlanService) Generate(ctx context.Context, userID uuid.UUID) (model.MealPlan, []model.MealPlanDay, error) {
 	prefs, err := s.prefs.GetByUserID(ctx, userID)
@@ -49,12 +51,14 @@ func (s *MealPlanService) Generate(ctx context.Context, userID uuid.UUID) (model
 		return model.MealPlan{}, nil, fmt.Errorf("load recent recipes: %w", err)
 	}
 
-	rawRecipes, err := s.ai.GenerateMealPlan(ctx, ai.MealPlanInput{
-		MaxPrepMinutes:    prefs.MaxPrepMinutes,
-		Disliked:          prefs.DislikedIngredients,
-		PreferredCuisines: prefs.PreferredCuisines,
-		RecentRecipes:     recent,
-	})
+	input := ai.MealPlanInput{RecentRecipes: recent, MaxPrepMinutes: defaultMaxPrepMinutes}
+	if prefs != nil {
+		input.MaxPrepMinutes = prefs.MaxPrepMinutes
+		input.Disliked = prefs.DislikedIngredients
+		input.PreferredCuisines = prefs.PreferredCuisines
+	}
+
+	rawRecipes, err := s.ai.GenerateMealPlan(ctx, input)
 	if err != nil {
 		return model.MealPlan{}, nil, fmt.Errorf("AI generation: %w", err)
 	}
@@ -75,18 +79,31 @@ func (s *MealPlanService) Generate(ctx context.Context, userID uuid.UUID) (model
 		return model.MealPlan{}, nil, err
 	}
 
-	plan, err := s.plans.Create(ctx, userID, weekStart)
+	tx, err := s.pool.BeginTx(ctx, nil)
+	if err != nil {
+		return model.MealPlan{}, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	recipeRepo := s.recipes.WithTx(tx)
+	planRepo := s.plans.WithTx(tx)
+
+	plan, err := planRepo.Create(ctx, userID, weekStart)
 	if err != nil {
 		return model.MealPlan{}, nil, fmt.Errorf("create plan: %w", err)
 	}
 
 	days := make([]model.MealPlanDay, 0, 5)
 	for _, raw := range rawRecipes {
-		recipe, err := s.recipes.Create(ctx, userID, raw.Name, raw.PrepMinutes, 1, rawToIngredients(raw.Ingredients), rawToSteps(raw.Steps), false)
+		recipe, err := recipeRepo.Create(ctx, userID, raw.Name, raw.PrepMinutes, 1, raw.ToIngredients(), raw.ToSteps(), false)
 		if err != nil {
 			return model.MealPlan{}, nil, fmt.Errorf("save recipe: %w", err)
 		}
-		day, err := s.plans.AddDay(ctx, plan.ID, raw.DayOfWeek, recipe.ID)
+		day, err := planRepo.AddDay(ctx, plan.ID, raw.DayOfWeek, recipe.ID)
 		if err != nil {
 			return model.MealPlan{}, nil, fmt.Errorf("save plan day: %w", err)
 		}
@@ -94,6 +111,10 @@ func (s *MealPlanService) Generate(ctx context.Context, userID uuid.UUID) (model
 		days = append(days, day)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return model.MealPlan{}, nil, fmt.Errorf("commit plan: %w", err)
+	}
+	committed = true
 	return plan, days, nil
 }
 
@@ -148,17 +169,19 @@ func (s *MealPlanService) RegenerateDay(ctx context.Context, userID uuid.UUID, p
 		return model.MealPlanDay{}, fmt.Errorf("load recent recipes: %w", err)
 	}
 
-	raw, err := s.ai.GenerateSingleRecipe(ctx, ai.MealPlanInput{
-		MaxPrepMinutes:    prefs.MaxPrepMinutes,
-		Disliked:          prefs.DislikedIngredients,
-		PreferredCuisines: prefs.PreferredCuisines,
-		RecentRecipes:     recent,
-	}, dayOfWeek)
+	input := ai.MealPlanInput{RecentRecipes: recent, MaxPrepMinutes: defaultMaxPrepMinutes}
+	if prefs != nil {
+		input.MaxPrepMinutes = prefs.MaxPrepMinutes
+		input.Disliked = prefs.DislikedIngredients
+		input.PreferredCuisines = prefs.PreferredCuisines
+	}
+
+	raw, err := s.ai.GenerateSingleRecipe(ctx, input, dayOfWeek)
 	if err != nil {
 		return model.MealPlanDay{}, fmt.Errorf("AI generation: %w", err)
 	}
 
-	recipe, err := s.recipes.Create(ctx, userID, raw.Name, raw.PrepMinutes, 1, rawToIngredients(raw.Ingredients), rawToSteps(raw.Steps), false)
+	recipe, err := s.recipes.Create(ctx, userID, raw.Name, raw.PrepMinutes, 1, raw.ToIngredients(), raw.ToSteps(), false)
 	if err != nil {
 		return model.MealPlanDay{}, fmt.Errorf("save recipe: %w", err)
 	}
@@ -223,6 +246,9 @@ func (s *MealPlanService) loadDays(ctx context.Context, plan *model.MealPlan) er
 	return nil
 }
 
+// defaultMaxPrepMinutes is applied when the user has no preferences row yet.
+const defaultMaxPrepMinutes = 30
+
 func nextMonday() time.Time {
 	today := time.Now()
 	wd := int(today.Weekday())
@@ -231,31 +257,4 @@ func nextMonday() time.Time {
 		delta += 7
 	}
 	return today.AddDate(0, 0, delta)
-}
-
-func rawToIngredients(raw []map[string]string) []model.RecipeIngredient {
-	out := make([]model.RecipeIngredient, 0, len(raw))
-	for _, m := range raw {
-		out = append(out, model.RecipeIngredient{
-			Name: m["name"],
-			Qty:  m["qty"],
-		})
-	}
-	return out
-}
-
-func rawToSteps(raw []map[string]interface{}) []model.RecipeStep {
-	out := make([]model.RecipeStep, 0, len(raw))
-	for _, m := range raw {
-		text, _ := m["text"].(string)
-		var timer int
-		if v, ok := m["timer_seconds"].(float64); ok {
-			timer = int(v)
-		}
-		out = append(out, model.RecipeStep{
-			Text:         text,
-			TimerSeconds: timer,
-		})
-	}
-	return out
 }

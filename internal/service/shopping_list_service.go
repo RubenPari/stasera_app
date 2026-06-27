@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -16,18 +18,20 @@ import (
 
 // ShoppingListService generates shopping lists from a meal plan and manages their lifecycle.
 type ShoppingListService struct {
-	plans    *repository.MealPlanRepository
-	recipes  *repository.RecipeRepository
+	pool     *sql.DB
+	plans    MealPlanStore
+	recipes  RecipeStore
 	lists    *repository.ShoppingListRepository
 }
 
 // NewShoppingListService returns a new ShoppingListService with the required dependencies.
 func NewShoppingListService(
-	plans *repository.MealPlanRepository,
-	recipes *repository.RecipeRepository,
+	pool *sql.DB,
+	plans MealPlanStore,
+	recipes RecipeStore,
 	lists *repository.ShoppingListRepository,
 ) *ShoppingListService {
-	return &ShoppingListService{plans: plans, recipes: recipes, lists: lists}
+	return &ShoppingListService{pool: pool, plans: plans, recipes: recipes, lists: lists}
 }
 
 // Generate aggregates ingredients from the current active meal plan into a new shopping list,
@@ -48,14 +52,31 @@ func (s *ShoppingListService) Generate(ctx context.Context, userID uuid.UUID) (*
 
 	aggregated := aggregateIngredients(ingredients)
 
-	if err := s.lists.DeleteOpenByUserID(ctx, userID); err != nil {
+	tx, err := s.pool.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	listRepo := s.lists.WithTx(tx)
+
+	if err := listRepo.DeleteOpenByUserID(ctx, userID); err != nil {
 		return nil, fmt.Errorf("clear previous list: %w", err)
 	}
 
-	list, err := s.lists.CreateWithItems(ctx, userID, &plan.ID, aggregated)
+	list, err := listRepo.CreateWithItems(ctx, userID, &plan.ID, aggregated)
 	if err != nil {
 		return nil, fmt.Errorf("create shopping list: %w", err)
 	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit shopping list: %w", err)
+	}
+	committed = true
 
 	items, err := s.lists.GetItemsByListID(ctx, list.ID)
 	if err != nil {
@@ -113,9 +134,9 @@ func (s *ShoppingListService) Complete(ctx context.Context, userID uuid.UUID) (*
 
 // Sentinel errors returned to handlers for clean HTTP mapping.
 var (
-	ErrNoActivePlan  = fmt.Errorf("no active meal plan")
-	ErrItemNotFound  = fmt.Errorf("shopping item not found")
-	ErrNoOpenList    = fmt.Errorf("no open shopping list")
+	ErrNoActivePlan = errors.New("no active meal plan")
+	ErrItemNotFound = errors.New("shopping item not found")
+	ErrNoOpenList   = errors.New("no open shopping list")
 )
 
 // aisleOrder defines the display order of aisles in the shopping list.
