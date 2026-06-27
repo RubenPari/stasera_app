@@ -33,7 +33,8 @@ class SettingsRepository {
 
   Future<StapleDto> updateStaple(String id, bool isActive) async {
     try {
-      final resp = await _dio.patch('/staples/$id', data: {'is_active': isActive});
+      final resp =
+          await _dio.patch('/staples/$id', data: {'is_active': isActive});
       return StapleDto.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw toApiException(e);
@@ -68,7 +69,7 @@ class SettingsRepository {
         'disliked_ingredients': disliked,
         'max_prep_minutes': maxPrep,
         'preferred_cuisines': cuisines,
-      });
+      },);
       return PreferencesDto.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw toApiException(e);
