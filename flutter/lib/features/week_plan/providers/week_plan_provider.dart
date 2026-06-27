@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/dto.dart';
 import '../../home/data/meal_plan_repository.dart';
+import '../../home/domain/plan_ops.dart';
 
 sealed class WeekPlanState {
   const WeekPlanState();
@@ -57,6 +58,7 @@ class WeekPlanNotifier extends StateNotifier<WeekPlanState> {
       state = WeekPlanError(e.toString());
     }
   }
+
   Future<void> swapDay(int dayOfWeek, String recipeId) async {
     final s = state;
     if (s is! WeekPlanLoaded) return;
@@ -66,17 +68,7 @@ class WeekPlanNotifier extends StateNotifier<WeekPlanState> {
         dayOfWeek: dayOfWeek,
         recipeId: recipeId,
       );
-      final days = s.plan.days.map((d) {
-        return d.dayOfWeek == dayOfWeek ? updated : d;
-      }).toList();
-      state = WeekPlanLoaded(MealPlanDto(
-        id: s.plan.id,
-        userId: s.plan.userId,
-        weekStart: s.plan.weekStart,
-        status: s.plan.status,
-        days: days,
-        createdAt: s.plan.createdAt,
-      ));
+      state = WeekPlanLoaded(replaceDayInPlan(s.plan, updated));
     } catch (e) {
       state = WeekPlanError(e.toString());
     }
@@ -90,17 +82,7 @@ class WeekPlanNotifier extends StateNotifier<WeekPlanState> {
         planId: s.plan.id,
         dayOfWeek: dayOfWeek,
       );
-      final days = s.plan.days.map((d) {
-        return d.dayOfWeek == dayOfWeek ? updated : d;
-      }).toList();
-      state = WeekPlanLoaded(MealPlanDto(
-        id: s.plan.id,
-        userId: s.plan.userId,
-        weekStart: s.plan.weekStart,
-        status: s.plan.status,
-        days: days,
-        createdAt: s.plan.createdAt,
-      ));
+      state = WeekPlanLoaded(replaceDayInPlan(s.plan, updated));
     } catch (e) {
       state = WeekPlanError(e.toString());
     }
@@ -108,6 +90,6 @@ class WeekPlanNotifier extends StateNotifier<WeekPlanState> {
 }
 
 final weekPlanProvider =
-    StateNotifierProvider<WeekPlanNotifier, WeekPlanState>((ref) {
+    StateNotifierProvider.autoDispose<WeekPlanNotifier, WeekPlanState>((ref) {
   return WeekPlanNotifier(ref.watch(mealPlanRepositoryProvider));
 });

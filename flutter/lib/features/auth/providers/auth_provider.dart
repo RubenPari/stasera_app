@@ -1,8 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/models/dto.dart';
 import '../../../core/notifications/notification_service.dart';
+import '../../../core/routes/app_routes.dart';
 import '../data/auth_repository.dart';
 
 /// Stato auth esposto al UI.
@@ -33,20 +35,16 @@ class Unauthenticated extends AuthState {
 }
 
 /// Notifier che orchestra login/register/logout.
+///
+/// Possiede un [Ref] per poter innescare la navigazione globale al logout
+/// (stesso wiring del `AuthInterceptor`: `ref.read(routerProvider).go(...)`),
+/// in modo che il logout da settings e il logout da 401-refresh-fallito
+/// condividano un unico percorso di navigazione.
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier(this._repo) : super(const AuthInitial());
+  AuthNotifier(this._repo, this._ref) : super(const AuthInitial());
 
   final AuthRepository _repo;
-
-  Future<void> checkSession() async {
-    state = const AuthLoading();
-    try {
-      final user = await _repo.me();
-      state = Authenticated(user);
-    } catch (_) {
-      state = const Unauthenticated();
-    }
-  }
+  final Ref _ref;
 
   Future<void> login(String email, String password) async {
     state = const AuthLoading();
@@ -106,14 +104,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Logout: cancella le notifiche, i token e naviga a `/login` via GoRouter
+  /// globale (wiring condiviso con `AuthInterceptor`).
   Future<void> logout() async {
     await NotificationService.cancelAllReminders();
     await _repo.logout();
     state = const Unauthenticated();
+    _ref.read(routerProvider).go(AppRoutes.login);
   }
 }
 
-final authProvider =
-    StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref.watch(authRepositoryProvider));
+final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
+  return AuthNotifier(ref.watch(authRepositoryProvider), ref);
 });

@@ -3,6 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/models/dto.dart';
+import '../../../core/routes/app_routes.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../shared/util/load_on_post_frame.dart';
 import '../../../shared/widgets/loading_overlay.dart';
 import '../providers/recipe_picker_provider.dart';
 import '../providers/week_plan_provider.dart';
@@ -28,9 +32,7 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(weekPlanProvider.notifier).load();
-    });
+    loadOnPostFrame(() => ref.read(weekPlanProvider.notifier).load());
   }
 
   @override
@@ -74,8 +76,7 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: () =>
-                  ref.read(weekPlanProvider.notifier).generate(),
+              onPressed: () => ref.read(weekPlanProvider.notifier).generate(),
               icon: const Icon(Icons.auto_awesome),
               label: const Text('Genera piano con AI'),
             ),
@@ -106,10 +107,10 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          ...plan.days.map((d) => _dayTile(d)),
+          ...plan.days.map(_dayTile),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: () => context.push('/shopping'),
+            onPressed: () => context.push(AppRoutes.shopping),
             icon: const Icon(Icons.shopping_cart_outlined),
             label: const Text('Genera lista della spesa'),
           ),
@@ -119,10 +120,9 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
     return const SizedBox.shrink();
   }
 
-  Widget _dayTile(dynamic day) {
-    // day è MealPlanDayDto, accesso dynamic per semplicità UI.
-    final recipe = day.recipe as dynamic?;
-    final dayName = _dayName(day.dayOfWeek as int);
+  Widget _dayTile(MealPlanDayDto day) {
+    final recipe = day.recipe;
+    final dayName = _dayName(day.dayOfWeek);
 
     return Card(
       child: ListTile(
@@ -133,13 +133,13 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
             const Spacer(),
             if (recipe != null)
               Text('${recipe.prepMinutes} min',
-                  style: const TextStyle(color: Colors.grey)),
+                  style: const TextStyle(color: AppTheme.muted),),
           ],
         ),
-        subtitle: Text((recipe?.name ?? '—') as String),
+        subtitle: Text(recipe?.name ?? '—'),
         trailing: IconButton(
           icon: const Icon(Icons.swap_horiz),
-          onPressed: () => _showDayOptions(day.dayOfWeek as int),
+          onPressed: () => _showDayOptions(day.dayOfWeek),
         ),
       ),
     );
@@ -179,6 +179,10 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
   void _openRecipePicker(int dayOfWeek) {
     _pickerSearchCtrl.clear();
     _pickerQuery = '';
+    // Carica le ricette al primo frame dell'apertura del picker.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => ref.read(recipePickerProvider.notifier).load(),
+    );
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -190,7 +194,7 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
           child: SafeArea(
             child: StatefulBuilder(
               builder: (ctx, setLocal) {
-                final recipesAsync = ref.watch(recipePickerProvider);
+                final pickerState = ref.watch(recipePickerProvider);
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -205,7 +209,8 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
                                 hintText: 'Cerca ricetta',
                                 prefixIcon: Icon(Icons.search),
                               ),
-                              onChanged: (v) => setLocal(() => _pickerQuery = v),
+                              onChanged: (v) =>
+                                  setLocal(() => _pickerQuery = v),
                             ),
                           ),
                           IconButton(
@@ -215,49 +220,7 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
                         ],
                       ),
                     ),
-                    Flexible(
-                      child: recipesAsync.when(
-                        data: (recipes) {
-                          final q = _pickerQuery.toLowerCase();
-                          final filtered = q.isEmpty
-                              ? recipes
-                              : recipes
-                                  .where((r) => r.name.toLowerCase().contains(q))
-                                  .toList();
-                          if (filtered.isEmpty) {
-                            return const Padding(
-                              padding: EdgeInsets.all(24),
-                              child: Text('Nessuna ricetta disponibile.'),
-                            );
-                          }
-                          return ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: filtered.length,
-                            itemBuilder: (_, i) {
-                              final recipe = filtered[i];
-                              return ListTile(
-                                title: Text(recipe.name),
-                                subtitle: Text('${recipe.prepMinutes} min'),
-                                onTap: () {
-                                  Navigator.pop(ctx);
-                                  ref
-                                      .read(weekPlanProvider.notifier)
-                                      .swapDay(dayOfWeek, recipe.id);
-                                },
-                              );
-                            },
-                          );
-                        },
-                        loading: () => const Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Center(child: CircularProgressIndicator()),
-                        ),
-                        error: (e, _) => Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text('Errore: $e'),
-                        ),
-                      ),
-                    ),
+                    Flexible(child: _pickerBody(pickerState, dayOfWeek)),
                   ],
                 );
               },
@@ -268,8 +231,55 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
     );
   }
 
+  Widget _pickerBody(RecipePickerState state, int dayOfWeek) {
+    if (state is RecipePickerLoading || state is RecipePickerInitial) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (state is RecipePickerError) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text('Errore: ${state.message}'),
+      );
+    }
+    final recipes = (state as RecipePickerLoaded).recipes;
+    final q = _pickerQuery.toLowerCase();
+    final filtered = q.isEmpty
+        ? recipes
+        : recipes.where((r) => r.name.toLowerCase().contains(q)).toList();
+    if (filtered.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Text('Nessuna ricetta disponibile.'),
+      );
+    }
+    return ListView.builder(
+      shrinkWrap: true,
+      itemCount: filtered.length,
+      itemBuilder: (_, i) {
+        final recipe = filtered[i];
+        return ListTile(
+          title: Text(recipe.name),
+          subtitle: Text('${recipe.prepMinutes} min'),
+          onTap: () {
+            Navigator.pop(context);
+            ref.read(weekPlanProvider.notifier).swapDay(dayOfWeek, recipe.id);
+          },
+        );
+      },
+    );
+  }
+
   String _dayName(int dayOfWeek) {
-    const names = {1: 'Lunedì', 2: 'Martedì', 3: 'Mercoledì', 4: 'Giovedì', 5: 'Venerdì'};
+    const names = {
+      1: 'Lunedì',
+      2: 'Martedì',
+      3: 'Mercoledì',
+      4: 'Giovedì',
+      5: 'Venerdì',
+    };
     return names[dayOfWeek] ?? '';
   }
 }

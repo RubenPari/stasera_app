@@ -48,12 +48,9 @@ class TonightNotifier extends StateNotifier<TonightState> {
       state = TonightError(e.toString());
     }
   }
-
-  /// Forza il refresh dopo POST /recipes/:id/cooked.
-  void invalidate() => load();
 }
 
 final tonightProvider =
-    StateNotifierProvider<TonightNotifier, TonightState>((ref) {
+    StateNotifierProvider.autoDispose<TonightNotifier, TonightState>((ref) {
   return TonightNotifier(ref.watch(mealPlanRepositoryProvider));
 });

@@ -23,7 +23,8 @@ class ShoppingLoaded extends ShoppingState {
   const ShoppingLoaded(this.list);
   final ShoppingListDto list;
   int get checkedCount => list.items.where((i) => i.isChecked).length;
-  bool get allChecked => list.items.isNotEmpty && checkedCount == list.items.length;
+  bool get allChecked =>
+      list.items.isNotEmpty && checkedCount == list.items.length;
 }
 
 class ShoppingError extends ShoppingState {
@@ -65,15 +66,9 @@ class ShoppingNotifier extends StateNotifier<ShoppingState> {
     if (s is! ShoppingLoaded) return;
     try {
       final updated = await _repo.updateItem(itemId, isChecked);
-      final items = s.list.items.map((i) => i.id == itemId ? updated : i).toList();
-      state = ShoppingLoaded(ShoppingListDto(
-        id: s.list.id,
-        userId: s.list.userId,
-        planId: s.list.planId,
-        items: items,
-        createdAt: s.list.createdAt,
-        completedAt: s.list.completedAt,
-      ));
+      final items =
+          s.list.items.map((i) => i.id == itemId ? updated : i).toList();
+      state = ShoppingLoaded(s.list.copyWith(items: items));
     } catch (e) {
       state = ShoppingError(e.toString());
     }
@@ -92,6 +87,6 @@ class ShoppingNotifier extends StateNotifier<ShoppingState> {
 }
 
 final shoppingProvider =
-    StateNotifierProvider<ShoppingNotifier, ShoppingState>((ref) {
+    StateNotifierProvider.autoDispose<ShoppingNotifier, ShoppingState>((ref) {
   return ShoppingNotifier(ref.watch(shoppingRepositoryProvider));
 });
