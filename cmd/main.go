@@ -12,12 +12,12 @@ import (
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 
+	"github.com/stasera/stasera-api/internal/ai"
 	"github.com/stasera/stasera-api/internal/config"
 	"github.com/stasera/stasera-api/internal/db"
 	"github.com/stasera/stasera-api/internal/handler"
 	"github.com/stasera/stasera-api/internal/middleware"
 	"github.com/stasera/stasera-api/internal/repository"
-	"github.com/stasera/stasera-api/internal/ai"
 	"github.com/stasera/stasera-api/internal/service"
 )
 
@@ -64,7 +64,6 @@ func main() {
 	stapleHandler := handler.NewStapleHandler(stapleRepo)
 	prefsHandler := handler.NewPreferencesHandler(prefsRepo)
 
-
 	e := echo.New()
 	e.Use(echomiddleware.Logger())
 	e.Use(echomiddleware.Recover())
@@ -78,6 +77,8 @@ func main() {
 	// Protected routes.
 	api := e.Group("/api/v1", middleware.AuthMiddleware(jwtManager))
 	api.GET("/auth/me", authHandler.Me)
+	api.PATCH("/auth/me", authHandler.UpdateMe)
+	api.POST("/auth/change-password", authHandler.ChangePassword)
 	// Meal plan routes.
 	api.GET("/meal-plan/current", mealPlanHandler.Current)
 	api.POST("/meal-plan/generate", mealPlanHandler.Generate)
@@ -108,7 +109,6 @@ func main() {
 	// Preferences routes.
 	api.GET("/preferences", prefsHandler.Get)
 	api.PATCH("/preferences", prefsHandler.Update)
-
 
 	// Graceful shutdown.
 	go func() {
