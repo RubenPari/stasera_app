@@ -4,9 +4,10 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// NewGatewayClient returns an OpenAI-compatible client pointed at Vercel AI Gateway.
-func NewGatewayClient(apiKey string) *openai.Client {
+// NewGatewayClient returns an OpenAI-compatible client pointed at the given base URL.
+// The baseURL should be provided from config (default https://ai-gateway.vercel.sh/v1).
+func NewGatewayClient(apiKey, baseURL string) *openai.Client {
 	cfg := openai.DefaultConfig(apiKey)
-	cfg.BaseURL = "https://ai-gateway.vercel.sh/v1"
+	cfg.BaseURL = baseURL
 	return openai.NewClientWithConfig(cfg)
 }
