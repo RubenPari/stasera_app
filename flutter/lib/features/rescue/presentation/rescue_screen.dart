@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../shared/widgets/recipe_card.dart';
+import '../../home/providers/tonight_provider.dart';
+import '../../week_plan/providers/week_plan_provider.dart';
 import '../providers/rescue_provider.dart';
 
 /// Modalità "troppo stanco": 3 ricette di emergenza con staple.
@@ -60,7 +62,16 @@ class _RescueScreenState extends ConsumerState<RescueScreen> {
                               padding: const EdgeInsets.only(bottom: 12),
                               child: RecipeCard(
                                 recipe: r,
-                                onTap: () => context.push('/cooking/${r.id}'),
+                                onTap: () async {
+                                  final finished = await context.push<bool>(
+                                    '/cooking/${r.id}',
+                                  );
+                                  if (!mounted) return;
+                                  if (finished == true) {
+                                    ref.invalidate(tonightProvider);
+                                    ref.invalidate(weekPlanProvider);
+                                  }
+                                },
                               ),
                             )),
                       ],
