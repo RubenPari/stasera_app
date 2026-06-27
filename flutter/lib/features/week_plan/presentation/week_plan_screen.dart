@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../shared/widgets/loading_overlay.dart';
+import '../providers/recipe_picker_provider.dart';
 import '../providers/week_plan_provider.dart';
 
 /// Pianificatore domenicale: mostra lun-ven, genera piano, rigenera giorno.
@@ -15,6 +16,15 @@ class WeekPlanScreen extends ConsumerStatefulWidget {
 }
 
 class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
+  final _pickerSearchCtrl = TextEditingController();
+  String _pickerQuery = '';
+
+  @override
+  void dispose() {
+    _pickerSearchCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -156,10 +166,102 @@ class _WeekPlanScreenState extends ConsumerState<WeekPlanScreen> {
                 title: const Text('Scegli ricetta'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  // TODO: aprire selettore ricette cachate.
+                  _openRecipePicker(dayOfWeek);
                 },
               ),
             ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _openRecipePicker(int dayOfWeek) {
+    _pickerSearchCtrl.clear();
+    _pickerQuery = '';
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: SafeArea(
+            child: StatefulBuilder(
+              builder: (ctx, setLocal) {
+                final recipesAsync = ref.watch(recipePickerProvider);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _pickerSearchCtrl,
+                              decoration: const InputDecoration(
+                                hintText: 'Cerca ricetta',
+                                prefixIcon: Icon(Icons.search),
+                              ),
+                              onChanged: (v) => setLocal(() => _pickerQuery = v),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Flexible(
+                      child: recipesAsync.when(
+                        data: (recipes) {
+                          final q = _pickerQuery.toLowerCase();
+                          final filtered = q.isEmpty
+                              ? recipes
+                              : recipes
+                                  .where((r) => r.name.toLowerCase().contains(q))
+                                  .toList();
+                          if (filtered.isEmpty) {
+                            return const Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text('Nessuna ricetta disponibile.'),
+                            );
+                          }
+                          return ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: filtered.length,
+                            itemBuilder: (_, i) {
+                              final recipe = filtered[i];
+                              return ListTile(
+                                title: Text(recipe.name),
+                                subtitle: Text('${recipe.prepMinutes} min'),
+                                onTap: () {
+                                  Navigator.pop(ctx);
+                                  ref
+                                      .read(weekPlanProvider.notifier)
+                                      .swapDay(dayOfWeek, recipe.id);
+                                },
+                              );
+                            },
+                          );
+                        },
+                        loading: () => const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                        error: (e, _) => Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text('Errore: $e'),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         );
       },
