@@ -28,15 +28,11 @@ func main() {
 	}
 
 	ctx := context.Background()
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg)
 	if err != nil {
 		log.Fatalf("database pool: %v", err)
 	}
-	defer db.Close(pool)
-
-	if err := db.Ping(ctx, pool); err != nil {
-		log.Fatalf("database ping: %v", err)
-	}
+	defer pool.Close()
 
 	if err := db.RunMigrations(ctx, pool); err != nil {
 		log.Fatalf("migrations: %v", err)
@@ -46,25 +42,31 @@ func main() {
 	stapleRepo := repository.NewStapleRepository(pool)
 	prefsRepo := repository.NewPreferencesRepository(pool)
 	jwtManager := middleware.NewJWTManager(cfg.JWTSecret, cfg.JWTAccessExpiryMinutes, cfg.JWTRefreshExpiryDays)
-	authHandler := handler.NewAuthHandler(userRepo, stapleRepo, jwtManager)
+	authHandler := handler.NewAuthHandler(userRepo, jwtManager)
 
-	aiClient := ai.NewGatewayClient(cfg.AIGatewayAPIKey)
-	aiGateway := ai.NewGateway(aiClient, cfg.AIModel)
+	aiClient := ai.NewGatewayClient(cfg.AIGatewayAPIKey, cfg.AIGatewayBaseURL)
+	aiGateway := ai.NewGateway(aiClient, cfg.AIModel, ai.GatewayConfig{
+		MaxTokens:      cfg.AIMaxTokens,
+		Temperature:    cfg.AITemperature,
+		TimeoutSeconds: cfg.AITimeoutSeconds,
+	})
 
 	recipeRepo := repository.NewRecipeRepository(pool)
 	mealPlanRepo := repository.NewMealPlanRepository(pool)
 	shoppingRepo := repository.NewShoppingListRepository(pool)
-	mealPlanService := service.NewMealPlanService(aiGateway, recipeRepo, mealPlanRepo, prefsRepo, stapleRepo)
+	mealPlanService := service.NewMealPlanService(pool, aiGateway, recipeRepo, mealPlanRepo, prefsRepo, stapleRepo)
 	mealPlanHandler := handler.NewMealPlanHandler(mealPlanService)
-	aiHandler := handler.NewAIHandler(aiGateway, recipeRepo, stapleRepo)
+	rescueService := service.NewRescueService(aiGateway, recipeRepo, stapleRepo)
+	rescueHandler := handler.NewRescueHandler(rescueService)
 
-	shoppingService := service.NewShoppingListService(mealPlanRepo, recipeRepo, shoppingRepo)
+	shoppingService := service.NewShoppingListService(pool, mealPlanRepo, recipeRepo, shoppingRepo)
 	shoppingHandler := handler.NewShoppingListHandler(shoppingService)
 	recipeHandler := handler.NewRecipeHandler(recipeRepo)
 	stapleHandler := handler.NewStapleHandler(stapleRepo)
 	prefsHandler := handler.NewPreferencesHandler(prefsRepo)
 
 	e := echo.New()
+	e.Validator = handler.NewValidator()
 	e.Use(echomiddleware.Logger())
 	e.Use(echomiddleware.Recover())
 	e.Use(echomiddleware.CORS())
@@ -84,9 +86,8 @@ func main() {
 	api.POST("/meal-plan/generate", mealPlanHandler.Generate)
 	api.PATCH("/meal-plan/:planId/days/:dayOfWeek", mealPlanHandler.SwapDay)
 	api.GET("/meal-plan/today", mealPlanHandler.Today)
-
-	// AI routes.
-	api.POST("/ai/rescue", aiHandler.Rescue)
+// AI routes.
+api.POST("/ai/rescue", rescueHandler.Rescue)
 
 	// Recipe routes.
 	api.GET("/recipes", recipeHandler.List)
