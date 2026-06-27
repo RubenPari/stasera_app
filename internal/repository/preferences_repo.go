@@ -12,7 +12,7 @@ import (
 
 // PreferencesRepository manages persistence for user preferences.
 type PreferencesRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 // NewPreferencesRepository returns a new PreferencesRepository backed by the provided pool.
@@ -20,8 +20,15 @@ func NewPreferencesRepository(db *sql.DB) *PreferencesRepository {
 	return &PreferencesRepository{db: db}
 }
 
-// GetByUserID returns the user's preferences, creating defaults if missing.
-func (r *PreferencesRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (model.Preferences, error) {
+// WithTx returns a copy of the repository bound to the provided transaction.
+func (r *PreferencesRepository) WithTx(tx DBTX) *PreferencesRepository {
+	return &PreferencesRepository{db: tx}
+}
+
+// GetByUserID returns the user's preferences.
+// Returns nil, nil when no preferences row exists for the user (the handler maps
+// this to 404; callers needing defaults must apply them explicitly).
+func (r *PreferencesRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*model.Preferences, error) {
 	var p model.Preferences
 	var dislikedBytes, cuisinesBytes []byte
 	var userIDStr string
@@ -31,23 +38,27 @@ func (r *PreferencesRepository) GetByUserID(ctx context.Context, userID uuid.UUI
 		WHERE user_id = ?
 	`, userID.String()).Scan(&userIDStr, &dislikedBytes, &p.MaxPrepMinutes, &cuisinesBytes, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r.createDefaults(ctx, userID)
+		return nil, nil
 	}
 	if err != nil {
-		return model.Preferences{}, err
+		return nil, err
 	}
 
-	p.UserID = uuid.MustParse(userIDStr)
+	uid, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, err
+	}
+	p.UserID = uid
 	if err := json.Unmarshal(dislikedBytes, &p.DislikedIngredients); err != nil {
-		return model.Preferences{}, err
+		return nil, err
 	}
 	if err := json.Unmarshal(cuisinesBytes, &p.PreferredCuisines); err != nil {
-		return model.Preferences{}, err
+		return nil, err
 	}
-	return p, nil
+	return &p, nil
 }
 
-// Update replaces the user's preferences.
+// Update replaces the user's preferences (upsert) and returns the updated record.
 func (r *PreferencesRepository) Update(ctx context.Context, userID uuid.UUID, p model.Preferences) (model.Preferences, error) {
 	dislikedBytes, err := json.Marshal(p.DislikedIngredients)
 	if err != nil {
@@ -70,25 +81,12 @@ func (r *PreferencesRepository) Update(ctx context.Context, userID uuid.UUID, p 
 	if err != nil {
 		return model.Preferences{}, err
 	}
-	return r.GetByUserID(ctx, userID)
-}
-
-func (r *PreferencesRepository) createDefaults(ctx context.Context, userID uuid.UUID) (model.Preferences, error) {
-	p := model.Preferences{
-		UserID:              userID,
-		DislikedIngredients: []string{},
-		MaxPrepMinutes:     30,
-		PreferredCuisines:  []string{},
-	}
-	dislikedBytes, _ := json.Marshal([]string{})
-	cuisinesBytes, _ := json.Marshal([]string{})
-
-	_, err := r.db.ExecContext(ctx, `
-		INSERT IGNORE INTO user_preferences (user_id, disliked_ingredients, max_prep_minutes, preferred_cuisines)
-		VALUES (?, ?, ?, ?)
-	`, userID.String(), string(dislikedBytes), 30, string(cuisinesBytes))
+	updated, err := r.GetByUserID(ctx, userID)
 	if err != nil {
 		return model.Preferences{}, err
 	}
-	return p, nil
+	if updated == nil {
+		return model.Preferences{}, sql.ErrNoRows
+	}
+	return *updated, nil
 }

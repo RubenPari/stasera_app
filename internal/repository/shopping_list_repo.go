@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stasera/stasera-api/internal/model"
@@ -11,12 +12,17 @@ import (
 
 // ShoppingListRepository manages persistence for shopping lists and items.
 type ShoppingListRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 // NewShoppingListRepository returns a new ShoppingListRepository backed by the provided pool.
 func NewShoppingListRepository(db *sql.DB) *ShoppingListRepository {
 	return &ShoppingListRepository{db: db}
+}
+
+// WithTx returns a copy of the repository bound to the provided transaction.
+func (r *ShoppingListRepository) WithTx(tx DBTX) *ShoppingListRepository {
+	return &ShoppingListRepository{db: tx}
 }
 
 // GetCurrent returns the user's most recent open shopping list, if any.
@@ -49,21 +55,17 @@ func (r *ShoppingListRepository) DeleteOpenByUserID(ctx context.Context, userID 
 	return err
 }
 
-// CreateWithItems inserts a new shopping list together with its items in a single transaction.
-// sort_order is taken from each item as provided. Returns the created list (without items).
+// CreateWithItems inserts a new shopping list together with its items.
+// sort_order is taken from each item as provided. The list+items are written
+// as a single atomic unit when the caller wraps this in a transaction (see
+// ShoppingListService.Generate, which begins the tx and calls WithTx).
 func (r *ShoppingListRepository) CreateWithItems(ctx context.Context, userID uuid.UUID, planID *uuid.UUID, items []model.ShoppingItem) (model.ShoppingList, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return model.ShoppingList{}, err
-	}
-	defer tx.Rollback()
-
 	id := uuid.NewString()
 	var planIDArg interface{}
 	if planID != nil {
 		planIDArg = planID.String()
 	}
-	_, err = tx.ExecContext(ctx, `
+	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO shopping_lists (id, user_id, plan_id)
 		VALUES (?, ?, ?)
 	`, id, userID.String(), planIDArg)
@@ -73,7 +75,7 @@ func (r *ShoppingListRepository) CreateWithItems(ctx context.Context, userID uui
 
 	for _, it := range items {
 		itemID := uuid.NewString()
-		_, err := tx.ExecContext(ctx, `
+		_, err := r.db.ExecContext(ctx, `
 			INSERT INTO shopping_items (id, list_id, name, quantity, aisle, is_checked, sort_order)
 			VALUES (?, ?, ?, ?, ?, FALSE, ?)
 		`, itemID, id, it.Name, it.Quantity, it.Aisle, it.SortOrder)
@@ -82,20 +84,17 @@ func (r *ShoppingListRepository) CreateWithItems(ctx context.Context, userID uui
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return model.ShoppingList{}, err
-	}
-
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, plan_id, created_at, completed_at
-		FROM shopping_lists
-		WHERE id = ?
-	`, id)
-	list, err := scanShoppingList(row)
+	uid, err := uuid.Parse(id)
 	if err != nil {
 		return model.ShoppingList{}, err
 	}
-	return *list, nil
+	list := model.ShoppingList{
+		ID:        uid,
+		UserID:    userID,
+		PlanID:    planID,
+		CreatedAt: time.Now(),
+	}
+	return list, nil
 }
 
 // GetItemsByListID returns all items of a list ordered by sort_order.
@@ -109,26 +108,32 @@ func (r *ShoppingListRepository) GetItemsByListID(ctx context.Context, listID uu
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var items []model.ShoppingItem
-	for rows.Next() {
+	return Collect(rows, func(s Scanner) (model.ShoppingItem, error) {
 		var it model.ShoppingItem
 		var idStr, listIDStr string
-		if err := rows.Scan(&idStr, &listIDStr, &it.Name, &it.Quantity, &it.Aisle, &it.IsChecked, &it.SortOrder); err != nil {
-			return nil, err
+		if err := s.Scan(&idStr, &listIDStr, &it.Name, &it.Quantity, &it.Aisle, &it.IsChecked, &it.SortOrder); err != nil {
+			return model.ShoppingItem{}, err
 		}
-		it.ID = uuid.MustParse(idStr)
-		it.ListID = uuid.MustParse(listIDStr)
-		items = append(items, it)
-	}
-	return items, rows.Err()
+		var parseErr error
+		it.ID, parseErr = uuid.Parse(idStr)
+		if parseErr != nil {
+			return model.ShoppingItem{}, parseErr
+		}
+		it.ListID, parseErr = uuid.Parse(listIDStr)
+		if parseErr != nil {
+			return model.ShoppingItem{}, parseErr
+		}
+		return it, nil
+	})
 }
 
 // UpdateItemChecked toggles the checked state of an item owned (transitively) by the user.
-// Returns nil, nil when the item does not exist or does not belong to the user.
+// Returns nil, nil when the item does not exist or does not belong to the user:
+// the UPDATE is filtered by user_id, so zero rows affected means not-owned/not-found,
+// and the subsequent SELECT is only run when an owned row was actually updated,
+// preventing cross-user data leakage.
 func (r *ShoppingListRepository) UpdateItemChecked(ctx context.Context, userID, itemID uuid.UUID, isChecked bool) (*model.ShoppingItem, error) {
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE shopping_items i
 		INNER JOIN shopping_lists l ON i.list_id = l.id
 		SET i.is_checked = ?
@@ -136,6 +141,13 @@ func (r *ShoppingListRepository) UpdateItemChecked(ctx context.Context, userID, 
 	`, isChecked, itemID.String(), userID.String())
 	if err != nil {
 		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
 	}
 
 	var it model.ShoppingItem
@@ -145,21 +157,21 @@ func (r *ShoppingListRepository) UpdateItemChecked(ctx context.Context, userID, 
 		FROM shopping_items
 		WHERE id = ?
 	`, itemID.String()).Scan(&idStr, &listIDStr, &it.Name, &it.Quantity, &it.Aisle, &it.IsChecked, &it.SortOrder)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}
-	it.ID = uuid.MustParse(idStr)
-	it.ListID = uuid.MustParse(listIDStr)
+	it.ID, err = uuid.Parse(idStr)
+	if err != nil {
+		return nil, err
+	}
+	it.ListID, err = uuid.Parse(listIDStr)
+	if err != nil {
+		return nil, err
+	}
 	return &it, nil
 }
-
-// MarkCompleted sets completed_at on the user's open shopping list.
-// Returns nil, nil when no open list exists for the user.
 func (r *ShoppingListRepository) MarkCompleted(ctx context.Context, userID uuid.UUID) (*model.ShoppingList, error) {
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE shopping_lists
 		SET completed_at = NOW()
 		WHERE user_id = ? AND completed_at IS NULL
@@ -167,7 +179,16 @@ func (r *ShoppingListRepository) MarkCompleted(ctx context.Context, userID uuid.
 	if err != nil {
 		return nil, err
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		// No open list existed; avoid returning a stale completed list.
+		return nil, nil
+	}
 
+	// The just-completed list is now the most recent completed one for the user.
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, plan_id, created_at, completed_at
 		FROM shopping_lists
@@ -176,21 +197,13 @@ func (r *ShoppingListRepository) MarkCompleted(ctx context.Context, userID uuid.
 		LIMIT 1
 	`, userID.String())
 	list, err := scanShoppingList(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}
 	return list, nil
 }
 
-// shoppingListScanner is the common interface accepted by scanShoppingList.
-type shoppingListScanner interface {
-	Scan(dest ...interface{}) error
-}
-
-func scanShoppingList(s shoppingListScanner) (*model.ShoppingList, error) {
+func scanShoppingList(s Scanner) (*model.ShoppingList, error) {
 	var list model.ShoppingList
 	var idStr, userIDStr string
 	var planIDStr sql.NullString
@@ -198,10 +211,21 @@ func scanShoppingList(s shoppingListScanner) (*model.ShoppingList, error) {
 	if err := s.Scan(&idStr, &userIDStr, &planIDStr, &list.CreatedAt, &completedAt); err != nil {
 		return nil, err
 	}
-	list.ID = uuid.MustParse(idStr)
-	list.UserID = uuid.MustParse(userIDStr)
+	parsedID, err := uuid.Parse(idStr)
+	if err != nil {
+		return nil, err
+	}
+	parsedUserID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, err
+	}
+	list.ID = parsedID
+	list.UserID = parsedUserID
 	if planIDStr.Valid {
-		p := uuid.MustParse(planIDStr.String)
+		p, err := uuid.Parse(planIDStr.String)
+		if err != nil {
+			return nil, err
+		}
 		list.PlanID = &p
 	}
 	if completedAt.Valid {

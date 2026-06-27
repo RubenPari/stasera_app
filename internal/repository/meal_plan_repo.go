@@ -12,13 +12,21 @@ import (
 
 // MealPlanRepository manages persistence for meal plans and their days.
 type MealPlanRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 // NewMealPlanRepository returns a new MealPlanRepository backed by the provided pool.
 func NewMealPlanRepository(db *sql.DB) *MealPlanRepository {
 	return &MealPlanRepository{db: db}
 }
+
+// WithTx returns a copy of the repository bound to the provided transaction.
+func (r *MealPlanRepository) WithTx(tx DBTX) *MealPlanRepository {
+	return &MealPlanRepository{db: tx}
+}
+
+// planColumns is the canonical SELECT column list for meal_plan rows.
+const planColumns = "id, user_id, week_start, status, created_at"
 
 // Create inserts a new meal plan for the user starting on weekStart.
 func (r *MealPlanRepository) Create(ctx context.Context, userID uuid.UUID, weekStart time.Time) (model.MealPlan, error) {
@@ -30,51 +38,42 @@ func (r *MealPlanRepository) Create(ctx context.Context, userID uuid.UUID, weekS
 	if err != nil {
 		return model.MealPlan{}, err
 	}
-	plan, err := r.GetByID(ctx, uuid.MustParse(id))
+	uid, err := uuid.Parse(id)
 	if err != nil {
 		return model.MealPlan{}, err
 	}
-	return *plan, nil
+	return model.MealPlan{
+		ID:        uid,
+		UserID:    userID,
+		WeekStart: weekStart,
+		Status:    "active",
+		CreatedAt: time.Now(),
+	}, nil
 }
 
 // GetCurrent returns the active meal plan for the current week, if any.
 func (r *MealPlanRepository) GetCurrent(ctx context.Context, userID uuid.UUID) (*model.MealPlan, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, week_start, status, created_at
-		FROM meal_plans
-		WHERE user_id = ?
-		  AND status = 'active'
-		ORDER BY week_start DESC
-		LIMIT 1
-	`, userID.String())
+	row := r.db.QueryRowContext(ctx, "SELECT "+planColumns+` FROM meal_plans
+		WHERE user_id = ? AND status = 'active'
+		ORDER BY week_start DESC LIMIT 1`, userID.String())
 	plan, err := scanMealPlan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	return plan, nil
+	return plan, err
 }
 
 // GetByID returns a meal plan by primary key.
 func (r *MealPlanRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.MealPlan, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, week_start, status, created_at
-		FROM meal_plans
-		WHERE id = ?
-	`, id.String())
+	row := r.db.QueryRowContext(ctx, "SELECT "+planColumns+" FROM meal_plans WHERE id = ?", id.String())
 	plan, err := scanMealPlan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	return plan, nil
+	return plan, err
 }
 
-// AddDay inserts a day into a meal plan.
+// AddDay inserts a day into a meal plan and returns the created record.
 func (r *MealPlanRepository) AddDay(ctx context.Context, planID uuid.UUID, dayOfWeek int, recipeID uuid.UUID) (model.MealPlanDay, error) {
 	id := uuid.NewString()
 	_, err := r.db.ExecContext(ctx, `
@@ -84,21 +83,16 @@ func (r *MealPlanRepository) AddDay(ctx context.Context, planID uuid.UUID, dayOf
 	if err != nil {
 		return model.MealPlanDay{}, err
 	}
-
-	var d model.MealPlanDay
-	var idStr, planIDStr, recipeIDStr string
-	err = r.db.QueryRowContext(ctx, `
-		SELECT id, plan_id, day_of_week, recipe_id
-		FROM meal_plan_days
-		WHERE id = ?
-	`, id).Scan(&idStr, &planIDStr, &d.DayOfWeek, &recipeIDStr)
+	uid, err := uuid.Parse(id)
 	if err != nil {
 		return model.MealPlanDay{}, err
 	}
-	d.ID = uuid.MustParse(idStr)
-	d.PlanID = uuid.MustParse(planIDStr)
-	d.RecipeID = uuid.MustParse(recipeIDStr)
-	return d, nil
+	return model.MealPlanDay{
+		ID:        uid,
+		PlanID:    planID,
+		DayOfWeek: dayOfWeek,
+		RecipeID:  recipeID,
+	}, nil
 }
 
 // GetDays returns all days for a plan, ordered by day_of_week.
@@ -112,21 +106,9 @@ func (r *MealPlanRepository) GetDays(ctx context.Context, planID uuid.UUID) ([]m
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var days []model.MealPlanDay
-	for rows.Next() {
-		var d model.MealPlanDay
-		var idStr, planIDStr, recipeIDStr string
-		if err := rows.Scan(&idStr, &planIDStr, &d.DayOfWeek, &recipeIDStr); err != nil {
-			return nil, err
-		}
-		d.ID = uuid.MustParse(idStr)
-		d.PlanID = uuid.MustParse(planIDStr)
-		d.RecipeID = uuid.MustParse(recipeIDStr)
-		days = append(days, d)
-	}
-	return days, rows.Err()
+	return Collect(rows, func(s Scanner) (model.MealPlanDay, error) {
+		return scanMealPlanDay(s)
+	})
 }
 
 // UpdateDayRecipe changes the recipe assigned to a specific day.
@@ -140,31 +122,21 @@ func (r *MealPlanRepository) UpdateDayRecipe(ctx context.Context, planID uuid.UU
 		return model.MealPlanDay{}, err
 	}
 
-	var d model.MealPlanDay
-	var idStr, planIDStr, recipeIDStr string
-	err = r.db.QueryRowContext(ctx, `
+	row := r.db.QueryRowContext(ctx, `
 		SELECT id, plan_id, day_of_week, recipe_id
 		FROM meal_plan_days
 		WHERE plan_id = ? AND day_of_week = ?
-	`, planID.String(), dayOfWeek).Scan(&idStr, &planIDStr, &d.DayOfWeek, &recipeIDStr)
-	if err != nil {
-		return model.MealPlanDay{}, err
-	}
-	d.ID = uuid.MustParse(idStr)
-	d.PlanID = uuid.MustParse(planIDStr)
-	d.RecipeID = uuid.MustParse(recipeIDStr)
-	return d, nil
+	`, planID.String(), dayOfWeek)
+	return scanMealPlanDay(row)
 }
 
-// GetTodayRecipeID returns the recipe ID assigned to the current day of week in the active plan.
-// Returns nil if today is not a weekday or no plan exists.
+// GetTodayRecipeID returns the recipe ID for the current weekday in the active plan.
+// Returns nil when today is a weekend or no plan exists.
 func (r *MealPlanRepository) GetTodayRecipeID(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error) {
 	dayOfWeek := int(time.Now().Weekday())
 	if dayOfWeek == 0 || dayOfWeek == 6 {
 		return nil, nil
 	}
-	// Go: Sunday=0, Monday=1 ... Friday=5, Saturday=6. API uses 1=lun ... 5=ven.
-	apiDayOfWeek := dayOfWeek
 
 	var recipeIDStr string
 	err := r.db.QueryRowContext(ctx, `
@@ -176,14 +148,17 @@ func (r *MealPlanRepository) GetTodayRecipeID(ctx context.Context, userID uuid.U
 		  AND d.day_of_week = ?
 		ORDER BY p.week_start DESC
 		LIMIT 1
-	`, userID.String(), apiDayOfWeek).Scan(&recipeIDStr)
+	`, userID.String(), dayOfWeek).Scan(&recipeIDStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	recipeID := uuid.MustParse(recipeIDStr)
+	recipeID, err := uuid.Parse(recipeIDStr)
+	if err != nil {
+		return nil, err
+	}
 	return &recipeID, nil
 }
 
@@ -209,12 +184,8 @@ func (r *MealPlanRepository) PlanExistsForWeek(ctx context.Context, userID uuid.
 	return exists, err
 }
 
-// mealPlanScanner is the common interface accepted by scanMealPlan.
-type mealPlanScanner interface {
-	Scan(dest ...interface{}) error
-}
-
-func scanMealPlan(s mealPlanScanner) (*model.MealPlan, error) {
+// scanMealPlan reads a meal plan row using the shared Scanner interface.
+func scanMealPlan(s Scanner) (*model.MealPlan, error) {
 	var plan model.MealPlan
 	var idStr, userIDStr string
 	if err := s.Scan(&idStr, &userIDStr, &plan.WeekStart, &plan.Status, &plan.CreatedAt); err != nil {
@@ -231,4 +202,27 @@ func scanMealPlan(s mealPlanScanner) (*model.MealPlan, error) {
 	plan.ID = parsedID
 	plan.UserID = parsedUserID
 	return &plan, nil
+}
+
+// scanMealPlanDay reads a meal_plan_days row using the shared Scanner interface.
+func scanMealPlanDay(s Scanner) (model.MealPlanDay, error) {
+	var d model.MealPlanDay
+	var idStr, planIDStr, recipeIDStr string
+	if err := s.Scan(&idStr, &planIDStr, &d.DayOfWeek, &recipeIDStr); err != nil {
+		return model.MealPlanDay{}, err
+	}
+	var err error
+	d.ID, err = uuid.Parse(idStr)
+	if err != nil {
+		return model.MealPlanDay{}, err
+	}
+	d.PlanID, err = uuid.Parse(planIDStr)
+	if err != nil {
+		return model.MealPlanDay{}, err
+	}
+	d.RecipeID, err = uuid.Parse(recipeIDStr)
+	if err != nil {
+		return model.MealPlanDay{}, err
+	}
+	return d, nil
 }
