@@ -98,7 +98,7 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
         title: const Text('Cucinando'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => context.go('/'),
+          onPressed: () => context.pop(false),
         ),
       ),
       body: state is CookingLoading
@@ -195,7 +195,7 @@ class _CookingScreenState extends ConsumerState<CookingScreen> {
           const Text('Buona cena!', style: TextStyle(fontSize: 28)),
           const SizedBox(height: 24),
           FilledButton(
-            onPressed: () => context.go('/'),
+            onPressed: () => context.pop(true),
             child: const Text('Torna a casa'),
           ),
         ],
