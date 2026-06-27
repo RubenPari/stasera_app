@@ -29,11 +29,9 @@ func (j *JWTManager) GenerateTokenPair(user model.User) (model.TokenPair, error)
 	now := time.Now()
 
 	accessClaims := jwt.MapClaims{
-		"user_id":      user.ID.String(),
-		"email":        user.Email,
-		"display_name": user.DisplayName,
-		"token_type":   "access",
-		"exp":          now.Add(j.accessExpiry).Unix(),
+		"user_id":    user.ID.String(),
+		"token_type": "access",
+		"exp":        now.Add(j.accessExpiry).Unix(),
 	}
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims).SignedString(j.secret)
 	if err != nil {
@@ -56,9 +54,9 @@ func (j *JWTManager) GenerateTokenPair(user model.User) (model.TokenPair, error)
 	}, nil
 }
 
-// ValidateToken parses a token string and returns its claims after verifying the signature.
-// It also checks that the token_type claim is present.
-func (j *JWTManager) ValidateToken(tokenString string) (*jwt.MapClaims, error) {
+// ValidateToken parses a token string, verifies its signature and checks that the
+// token_type claim matches the expected type ("access" or "refresh").
+func (j *JWTManager) ValidateToken(tokenString string, expectedType string) (*jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -74,8 +72,8 @@ func (j *JWTManager) ValidateToken(tokenString string) (*jwt.MapClaims, error) {
 		return nil, fmt.Errorf("invalid token claims")
 	}
 
-	if _, ok := claims["token_type"]; !ok {
-		return nil, fmt.Errorf("missing token_type claim")
+	if t, _ := claims["token_type"].(string); t != expectedType {
+		return nil, fmt.Errorf("invalid token_type")
 	}
 
 	return &claims, nil
