@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/notifications/notification_service.dart';
 import '../providers/auth_provider.dart';
 
+/// Schermata di login. Email + password, link a registrazione.
 /// Schermata di login. Email + password, link a registrazione.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -33,6 +35,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         );
     final state = ref.read(authProvider);
     if (state is Authenticated && mounted) {
+      await NotificationService.scheduleWeekdayReminders();
       context.go('/');
     }
   }
