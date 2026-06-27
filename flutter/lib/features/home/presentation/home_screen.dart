@@ -3,9 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
-import '../../../core/notifications/notification_service.dart';
+import '../../../core/routes/app_routes.dart';
+import '../../../shared/util/load_on_post_frame.dart';
 import '../../../shared/widgets/recipe_card.dart';
-import '../../auth/providers/auth_provider.dart';
 import '../../week_plan/providers/week_plan_provider.dart';
 import '../providers/tonight_provider.dart';
 
@@ -22,26 +22,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Carica la cena di stasera al primo build.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(tonightProvider.notifier).load();
-    });
+    loadOnPostFrame(() => ref.read(tonightProvider.notifier).load());
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<AuthState>(authProvider, (prev, next) {
-      if (next is Authenticated) {
-        NotificationService.scheduleWeekdayReminders();
-      } else if (next is Unauthenticated) {
-        NotificationService.cancelAllReminders();
-      }
-    });
     final state = ref.watch(tonightProvider);
     final today = DateTime.now();
     final isSunday = today.weekday == DateTime.sunday;
-    final isWeekday = today.weekday >= DateTime.monday &&
-        today.weekday <= DateTime.friday;
+    final isWeekday =
+        today.weekday >= DateTime.monday && today.weekday <= DateTime.friday;
 
     return Scaffold(
       appBar: AppBar(
@@ -66,7 +56,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _openCooking(String recipeId) async {
-    final finished = await context.push<bool>('/cooking/$recipeId');
+    final finished = await context.push<bool>(AppRoutes.cookingFor(recipeId));
     if (finished == true && mounted) {
       ref.invalidate(tonightProvider);
       ref.invalidate(weekPlanProvider);
@@ -79,8 +69,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
     if (state is TonightError) {
       return Center(
-        child: Text('Errore: ${state.message}',
-            textAlign: TextAlign.center),
+        child: Text('Errore: ${state.message}', textAlign: TextAlign.center),
       );
     }
     if (state is TonightEmpty) {
@@ -120,7 +109,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: () => context.push('/rescue'),
+            onPressed: () => context.push(AppRoutes.rescue),
             icon: const Icon(Icons.bolt),
             label: const Text('Troppo stanco — cambia'),
           ),
@@ -143,7 +132,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton(
-            onPressed: () => context.push('/week'),
+            onPressed: () => context.push(AppRoutes.week),
             child: const Text('Pianifica la settimana'),
           ),
         ],
@@ -165,7 +154,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton(
-            onPressed: () => context.push('/week'),
+            onPressed: () => context.push(AppRoutes.week),
             child: const Text('Apri Settimana'),
           ),
         ],

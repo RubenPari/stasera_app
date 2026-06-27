@@ -22,7 +22,7 @@ class AuthRepository {
         'email': email,
         'password': password,
         'display_name': displayName,
-      });
+      },);
       final auth = AuthResponseDto.fromJson(resp.data as Map<String, dynamic>);
       await _storage.saveTokens(
         accessToken: auth.accessToken,
@@ -42,7 +42,7 @@ class AuthRepository {
       final resp = await _dio.post('/auth/login', data: {
         'email': email,
         'password': password,
-      });
+      },);
       final auth = AuthResponseDto.fromJson(resp.data as Map<String, dynamic>);
       await _storage.saveTokens(
         accessToken: auth.accessToken,
@@ -62,7 +62,7 @@ class AuthRepository {
     try {
       final resp = await _dio.patch('/auth/me', data: {
         'display_name': displayName,
-      });
+      },);
       return UserDto.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw toApiException(e);
@@ -77,7 +77,7 @@ class AuthRepository {
       await _dio.post('/auth/change-password', data: {
         'current_password': currentPassword,
         'new_password': newPassword,
-      });
+      },);
     } on DioException catch (e) {
       throw toApiException(e);
     }
@@ -94,5 +94,6 @@ class AuthRepository {
 }
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  return AuthRepository(ref.watch(apiClientProvider), ref.watch(authStorageProvider));
+  return AuthRepository(
+      ref.watch(apiClientProvider), ref.watch(authStorageProvider),);
 });

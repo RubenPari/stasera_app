@@ -4,6 +4,10 @@ import 'package:timezone/timezone.dart' as tz;
 
 /// Servizio per schedulare la notifica giornaliera "Cosa mangi stasera?".
 /// Viene schedulata alle 18:30 di ogni giorno feriale (lun-ven).
+///
+/// Scheduling singleton: la pianificazione avviene UNA sola volta, al login
+/// (vedi `LoginScreen`); le notifiche sono ricorrenti settimanali e persistono
+/// tra riavvii dell'app. Il logout le cancella.
 class NotificationService {
   NotificationService._();
 
@@ -19,13 +23,12 @@ class NotificationService {
     await _plugin.initialize(settings);
   }
 
-  /// Schedula una notifica ogni lunedì-venerdì alle 18:30.
+  /// Schedula una notifica ricorrente ogni lunedì-venerdì alle 18:30.
   /// Sostituisce eventuali pianificazioni precedenti.
+  /// Da chiamare una sola volta al login.
   static Future<void> scheduleWeekdayReminders() async {
     await cancelAllReminders();
-    for (var weekday = DateTime.monday;
-        weekday <= DateTime.friday;
-        weekday++) {
+    for (var weekday = DateTime.monday; weekday <= DateTime.friday; weekday++) {
       final when = _nextWeekdayAt(hour: 18, minute: 30, weekday: weekday);
       await _plugin.zonedSchedule(
         weekday,
@@ -49,7 +52,7 @@ class NotificationService {
     }
   }
 
-  /// Cancella tutte le notifiche settimanali pianificate.
+  /// Cancella tutte le notifiche settimanali pianificate. Da chiamare al logout.
   static Future<void> cancelAllReminders() async {
     for (var id = DateTime.monday; id <= DateTime.friday; id++) {
       await _plugin.cancel(id);
@@ -76,50 +79,5 @@ class NotificationService {
       scheduled = scheduled.add(const Duration(days: 1));
     }
     return scheduled;
-  }
-
-  /// Schedula (o rischedula) la notifica giornaliera alle 18:30.
-  /// Da chiamare al login e ogni volta che l'utente apre l'app.
-  static Future<void> scheduleDailyReminder() async {
-    await _plugin.cancel(0);
-
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      18,
-      30,
-    );
-
-    // Se già passato oggi, sposta a domani.
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
-    }
-
-    await _plugin.zonedSchedule(
-      0,
-      'Cosa mangi stasera?',
-      'Apri l\'app e scopri la cena di stasera.',
-      scheduled,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'stasera_daily',
-          'Promemoria serale',
-          channelDescription: 'Notifica giornaliera alle 18:30',
-          importance: Importance.defaultImportance,
-        ),
-        iOS: DarwinNotificationDetails(),
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
-  }
-
-  static Future<void> cancelAll() async {
-    await _plugin.cancel(0);
   }
 }
