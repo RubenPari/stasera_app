@@ -3,24 +3,19 @@ package handler
 import (
 	"net/http"
 
-	"github.com/go-playground/validator/v10"
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/stasera/stasera-api/internal/middleware"
 	"github.com/stasera/stasera-api/internal/model"
-	"github.com/stasera/stasera-api/internal/repository"
 )
 
 // StapleHandler exposes endpoints to manage the user's staples.
 type StapleHandler struct {
-	repo      *repository.StapleRepository
-	validator *validator.Validate
+	repo StapleStore
 }
 
 // NewStapleHandler returns a new StapleHandler.
-func NewStapleHandler(repo *repository.StapleRepository) *StapleHandler {
-	return &StapleHandler{repo: repo, validator: validator.New()}
+func NewStapleHandler(repo StapleStore) *StapleHandler {
+	return &StapleHandler{repo: repo}
 }
 
 type createStapleRequest struct {
@@ -33,14 +28,11 @@ type updateStapleRequest struct {
 
 // List returns all staples for the user, active and inactive.
 func (h *StapleHandler) List(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	staples, err := h.repo.GetAllByUserID(c.Request().Context(), uid)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load staples"})
+		return respondError(c, err)
 	}
 
 	dtos := make([]model.StapleDTO, len(staples))
@@ -52,49 +44,37 @@ func (h *StapleHandler) List(c echo.Context) error {
 
 // Create adds a new staple or reactivates an existing one with the same name.
 func (h *StapleHandler) Create(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	var req createStapleRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-	}
-	if err := h.validator.Struct(req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	staple, err := h.repo.Create(c.Request().Context(), uid, req.Name)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create staple"})
+		return respondError(c, err)
 	}
 	return c.JSON(http.StatusCreated, toStapleDTO(staple))
 }
 
 // Update toggles the is_active flag of a staple owned by the user.
 func (h *StapleHandler) Update(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathUUID(c, "id")
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid staple id"})
+		return err
 	}
 
 	var req updateStapleRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-	}
-	if err := h.validator.Struct(req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	staple, err := h.repo.UpdateActive(c.Request().Context(), uid, id, *req.IsActive)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update staple"})
+		return respondError(c, err)
 	}
 	if staple == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "staple not found"})
@@ -104,19 +84,16 @@ func (h *StapleHandler) Update(c echo.Context) error {
 
 // Delete removes a staple owned by the user.
 func (h *StapleHandler) Delete(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := parsePathUUID(c, "id")
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid staple id"})
+		return err
 	}
 
 	deleted, err := h.repo.DeleteByID(c.Request().Context(), uid, id)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to delete staple"})
+		return respondError(c, err)
 	}
 	if !deleted {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "staple not found"})

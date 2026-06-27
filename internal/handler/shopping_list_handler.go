@@ -4,10 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/stasera/stasera-api/internal/middleware"
 	"github.com/stasera/stasera-api/internal/model"
 	"github.com/stasera/stasera-api/internal/service"
 )
@@ -18,8 +16,8 @@ type ShoppingListHandler struct {
 }
 
 // NewShoppingListHandler returns a new ShoppingListHandler.
-func NewShoppingListHandler(service *service.ShoppingListService) *ShoppingListHandler {
-	return &ShoppingListHandler{service: service}
+func NewShoppingListHandler(svc *service.ShoppingListService) *ShoppingListHandler {
+	return &ShoppingListHandler{service: svc}
 }
 
 type updateItemRequest struct {
@@ -28,14 +26,11 @@ type updateItemRequest struct {
 
 // Current returns the user's open shopping list with its items.
 func (h *ShoppingListHandler) Current(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	list, err := h.service.GetCurrent(c.Request().Context(), uid)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 	if list == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no open shopping list"})
@@ -45,61 +40,49 @@ func (h *ShoppingListHandler) Current(c echo.Context) error {
 
 // Generate aggregates the current meal plan into a new shopping list.
 func (h *ShoppingListHandler) Generate(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	list, err := h.service.Generate(c.Request().Context(), uid)
 	if err != nil {
 		if errors.Is(err, service.ErrNoActivePlan) {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "no active meal plan"})
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 	return c.JSON(http.StatusCreated, toShoppingListDTO(*list))
 }
 
 // UpdateItem toggles an item's checked state.
 func (h *ShoppingListHandler) UpdateItem(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
-	itemID, err := uuid.Parse(c.Param("itemId"))
+	itemID, err := parsePathUUID(c, "itemId")
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid item id"})
+		return err
 	}
 
 	var req updateItemRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-	}
-	if req.IsChecked == nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "is_checked is required"})
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	item, err := h.service.UpdateItem(c.Request().Context(), uid, itemID, *req.IsChecked)
 	if err != nil {
 		if errors.Is(err, service.ErrItemNotFound) {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "shopping item not found"})
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 	return c.JSON(http.StatusOK, toShoppingItemDTO(*item))
 }
 
 // Complete marks the user's open shopping list as completed.
 func (h *ShoppingListHandler) Complete(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	list, err := h.service.Complete(c.Request().Context(), uid)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 	if list == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no open shopping list"})

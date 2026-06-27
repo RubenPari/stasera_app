@@ -2,46 +2,36 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/stasera/stasera-api/internal/middleware"
 	"github.com/stasera/stasera-api/internal/model"
 	"github.com/stasera/stasera-api/internal/service"
 )
 
 // MealPlanHandler handles meal plan endpoints.
 type MealPlanHandler struct {
-	service   *service.MealPlanService
-	validator *validator.Validate
+	service *service.MealPlanService
 }
 
 // NewMealPlanHandler returns a new MealPlanHandler.
-func NewMealPlanHandler(service *service.MealPlanService) *MealPlanHandler {
-	return &MealPlanHandler{
-		service:   service,
-		validator: validator.New(),
-	}
+func NewMealPlanHandler(svc *service.MealPlanService) *MealPlanHandler {
+	return &MealPlanHandler{service: svc}
 }
 
 type swapDayRequest struct {
-	RecipeID    *string `json:"recipe_id,omitempty"`
-	Regenerate  *bool   `json:"regenerate,omitempty"`
+	RecipeID   *string `json:"recipe_id"`
+	Regenerate *bool   `json:"regenerate"`
 }
 
 // Current returns the active meal plan for the current week.
 func (h *MealPlanHandler) Current(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	plan, err := h.service.GetCurrent(c.Request().Context(), uid)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 	if plan == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no active meal plan"})
@@ -52,14 +42,11 @@ func (h *MealPlanHandler) Current(c echo.Context) error {
 
 // Generate asks the AI to create a new weekly meal plan.
 func (h *MealPlanHandler) Generate(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	plan, days, err := h.service.Generate(c.Request().Context(), uid)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 
 	dto := toMealPlanDTO(plan)
@@ -72,30 +59,27 @@ func (h *MealPlanHandler) Generate(c echo.Context) error {
 
 // SwapDay replaces the recipe for a specific day.
 func (h *MealPlanHandler) SwapDay(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
+	uid := mustUserID(c)
+
+	planID, err := parsePathUUID(c, "planId")
 	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
+		return err
 	}
 
-	planID, err := uuid.Parse(c.Param("planId"))
+	dayOfWeek, err := parsePathInt(c, "dayOfWeek", 1, 5)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid plan id"})
-	}
-
-	dayOfWeek, err := strconv.Atoi(c.Param("dayOfWeek"))
-	if err != nil || dayOfWeek < 1 || dayOfWeek > 5 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid day of week"})
+		return err
 	}
 
 	var req swapDayRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	if req.Regenerate != nil && *req.Regenerate {
 		day, err := h.service.RegenerateDay(c.Request().Context(), uid, planID, dayOfWeek)
 		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return respondError(c, err)
 		}
 		return c.JSON(http.StatusOK, toMealPlanDayDTO(day))
 	}
@@ -110,7 +94,7 @@ func (h *MealPlanHandler) SwapDay(c echo.Context) error {
 
 	day, err := h.service.SwapDay(c.Request().Context(), uid, planID, dayOfWeek, recipeID)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusOK, toMealPlanDayDTO(day))
@@ -118,14 +102,11 @@ func (h *MealPlanHandler) SwapDay(c echo.Context) error {
 
 // Today returns the recipe assigned to today in the active plan.
 func (h *MealPlanHandler) Today(c echo.Context) error {
-	uid, err := middleware.GetUserID(c)
-	if err != nil {
-		return middleware.Unauthorized(c, "missing or invalid token")
-	}
+	uid := mustUserID(c)
 
 	recipe, err := h.service.GetToday(c.Request().Context(), uid)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return respondError(c, err)
 	}
 	if recipe == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no recipe planned for today"})
@@ -161,20 +142,4 @@ func toMealPlanDayDTO(d model.MealPlanDay) model.MealPlanDayDTO {
 		dto.Recipe = &r
 	}
 	return dto
-}
-
-func toRecipeDTO(r model.Recipe) model.RecipeDTO {
-	return model.RecipeDTO{
-		ID:           r.ID,
-		UserID:       r.UserID,
-		Name:         r.Name,
-		PrepMinutes:  r.PrepMinutes,
-		Servings:     r.Servings,
-		Ingredients:  r.Ingredients,
-		Steps:        r.Steps,
-		IsRescue:     r.IsRescue,
-		TimesCooked:  r.TimesCooked,
-		LastCookedAt: r.LastCookedAt,
-		CreatedAt:    r.CreatedAt,
-	}
 }
