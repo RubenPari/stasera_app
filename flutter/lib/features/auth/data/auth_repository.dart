@@ -58,6 +58,31 @@ class AuthRepository {
     await _storage.clear();
   }
 
+  Future<UserDto> updateMe({required String displayName}) async {
+    try {
+      final resp = await _dio.patch('/auth/me', data: {
+        'display_name': displayName,
+      });
+      return UserDto.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw toApiException(e);
+    }
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _dio.post('/auth/change-password', data: {
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      });
+    } on DioException catch (e) {
+      throw toApiException(e);
+    }
+  }
+
   Future<UserDto> me() async {
     try {
       final resp = await _dio.get('/auth/me');
