@@ -22,33 +22,37 @@ type TokenPair struct {
 
 // AuthResponse is returned by register and login endpoints.
 type AuthResponse struct {
-	User         UserDTO   `json:"user"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
+	User         UserDTO `json:"user"`
+	AccessToken  string  `json:"access_token"`
+	RefreshToken string  `json:"refresh_token"`
 }
 
-// Preferences represents the dietary settings of a user.
-type Preferences struct {
-	UserID              uuid.UUID `db:"user_id"               json:"user_id"`
-	DislikedIngredients []string  `db:"disliked_ingredients"  json:"disliked_ingredients"`
-	MaxPrepMinutes      int       `db:"max_prep_minutes"      json:"max_prep_minutes"`
-	PreferredCuisines   []string  `db:"preferred_cuisines"    json:"preferred_cuisines"`
-	UpdatedAt           time.Time `db:"updated_at"            json:"updated_at"`
+// RecipeIngredientDTO is the public representation of a recipe ingredient.
+// It mirrors RecipeIngredient but is isolated from the domain model's JSON tags.
+type RecipeIngredientDTO struct {
+	Name string `json:"name"`
+	Qty  string `json:"qty"`
+}
+
+// RecipeStepDTO is the public representation of a recipe step.
+type RecipeStepDTO struct {
+	Text         string `json:"text"`
+	TimerSeconds int    `json:"timer_seconds,omitempty"`
 }
 
 // RecipeDTO is the public representation of a recipe.
 type RecipeDTO struct {
-	ID           uuid.UUID          `json:"id"`
-	UserID       uuid.UUID          `json:"user_id"`
-	Name         string             `json:"name"`
-	PrepMinutes  int                `json:"prep_minutes"`
-	Servings     int                `json:"servings"`
-	Ingredients  []RecipeIngredient `json:"ingredients"`
-	Steps        []RecipeStep       `json:"steps"`
-	IsRescue     bool               `json:"is_rescue"`
-	TimesCooked  int                `json:"times_cooked"`
-	LastCookedAt *time.Time         `json:"last_cooked_at,omitempty"`
-	CreatedAt    time.Time          `json:"created_at"`
+	ID           uuid.UUID             `json:"id"`
+	UserID       uuid.UUID             `json:"user_id"`
+	Name         string                `json:"name"`
+	PrepMinutes  int                   `json:"prep_minutes"`
+	Servings     int                   `json:"servings"`
+	Ingredients  []RecipeIngredientDTO `json:"ingredients"`
+	Steps        []RecipeStepDTO       `json:"steps"`
+	IsRescue     bool                  `json:"is_rescue"`
+	TimesCooked  int                   `json:"times_cooked"`
+	LastCookedAt *time.Time            `json:"last_cooked_at,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 // MealPlanDTO is the public representation of a meal plan including its days.
@@ -100,6 +104,7 @@ type StapleDTO struct {
 }
 
 // PreferencesDTO is the public representation of user dietary preferences.
+// Slice fields are always serialized as arrays (never null).
 type PreferencesDTO struct {
 	UserID              uuid.UUID `json:"user_id"`
 	DislikedIngredients []string  `json:"disliked_ingredients"`

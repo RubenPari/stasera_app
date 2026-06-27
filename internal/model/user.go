@@ -8,9 +8,9 @@ import (
 
 // User represents an authenticated account in the system.
 type User struct {
-	ID           uuid.UUID `db:"id"            json:"id"`
-	Email        string    `db:"email"         json:"email"`
-	PasswordHash string    `db:"password_hash" json:"-"`
-	DisplayName  string    `db:"display_name"  json:"display_name"`
-	CreatedAt    time.Time `db:"created_at"    json:"created_at"`
+	ID           uuid.UUID `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	DisplayName  string    `json:"display_name"`
+	CreatedAt    time.Time `json:"created_at"`
 }
